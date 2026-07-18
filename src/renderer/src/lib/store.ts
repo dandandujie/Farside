@@ -284,7 +284,13 @@ function mergeEvent(
       satelliteKind:
         incoming.satelliteKind === 'coder' ? existing.satelliteKind : incoming.satelliteKind,
       task: incoming.task === '子代理任务' ? existing.task : incoming.task,
-      result: incoming.result || existing.result
+      startedAt: incoming.startedAt ?? existing.startedAt,
+      durationMs: Math.max(existing.durationMs ?? 0, incoming.durationMs ?? 0) || undefined,
+      toolCount: Math.max(existing.toolCount ?? 0, incoming.toolCount ?? 0),
+      contextTokens: Math.max(existing.contextTokens ?? 0, incoming.contextTokens ?? 0) || undefined,
+      tokens: Math.max(existing.tokens ?? 0, incoming.tokens ?? 0) || undefined,
+      latestActivity: incoming.latestActivity || existing.latestActivity,
+      result: incoming.result ?? (incoming.status === 'in-orbit' ? undefined : existing.result)
     }
   }
   return { ...existing, ...incoming, at: existing.at } as TrajectoryEvent

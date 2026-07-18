@@ -45,6 +45,7 @@ import {
   type GoalState,
   type MoonPhase,
   type QuestionRequest,
+  type SatelliteEvent,
   type Session,
   type TrajectoryEvent
 } from '@shared/types'
@@ -219,6 +220,26 @@ interface PersistedTelemetry {
   at: number
 }
 
+interface SubagentRuntime {
+  id: string
+  sessionId: string
+  at: number
+  lastAt: number
+  satelliteKind: SatelliteEvent['satelliteKind']
+  status: SatelliteEvent['status']
+  task: string
+  parentToolCallId?: string
+  swarmIndex?: number
+  runInBackground?: boolean
+  startedAt?: number
+  toolCount: number
+  contextTokens?: number
+  tokens?: number
+  latestActivity?: string
+  latestModelText: string
+  result?: string
+}
+
 interface TokenPricing {
   cachedInput: number
   input: number
@@ -242,6 +263,35 @@ function usageNumber(usage: UnknownRecord, ...keys: string[]): number {
     if (value !== null && value >= 0) return value
   }
   return 0
+}
+
+function tokenUsageTotal(value: unknown): number | undefined {
+  if (!isRecord(value)) return undefined
+  const groups = [
+    ['inputOther', 'input_other'],
+    ['output', 'output_tokens'],
+    ['inputCacheRead', 'input_cache_read'],
+    ['inputCacheCreation', 'input_cache_creation']
+  ]
+  let seen = false
+  let total = 0
+  for (const keys of groups) {
+    for (const key of keys) {
+      const amount = finiteNumber(value[key])
+      if (amount === null || amount < 0) continue
+      total += amount
+      seen = true
+      break
+    }
+  }
+  return seen ? total : undefined
+}
+
+function compactActivity(value: unknown): string {
+  const candidate = isRecord(value)
+    ? value.text ?? value.message ?? value.delta ?? value.output ?? value
+    : value
+  return textOf(candidate, 2_000).replace(/\s+/g, ' ').trim().slice(-320)
 }
 
 function exactCost(record: UnknownRecord, usage: UnknownRecord): number | undefined {
@@ -586,6 +636,7 @@ export class KimiClientService {
   private thinking = new Map<string, { id: string; startedAt: number }>()
   private thinkingSequence = 0
   private activeToolCalls = new Map<string, Set<string>>()
+  private subagents = new Map<string, Map<string, SubagentRuntime>>()
   private wirePaths = new Map<string, string>()
 
   constructor(private readonly server: ServerService) {}
@@ -1697,10 +1748,129 @@ export class KimiClientService {
     return (this.activeToolCalls.get(sessionId)?.size ?? 0) > 0
   }
 
+  private subagentRuntime(sessionId: string, subagentId: string, at: number): SubagentRuntime {
+    let bySession = this.subagents.get(sessionId)
+    if (!bySession) {
+      bySession = new Map()
+      this.subagents.set(sessionId, bySession)
+    }
+    let state = bySession.get(subagentId)
+    if (!state) {
+      state = {
+        id: subagentId,
+        sessionId,
+        at,
+        lastAt: at,
+        satelliteKind: 'coder',
+        status: 'launching',
+        task: '子代理任务',
+        toolCount: 0,
+        latestModelText: ''
+      }
+      bySession.set(subagentId, state)
+    }
+    return state
+  }
+
+  private emitSubagent(state: SubagentRuntime): void {
+    this.upsertEvent(state.sessionId, {
+      id: `subagent-${state.id}`,
+      kind: 'satellite',
+      at: state.at,
+      satelliteKind: state.satelliteKind,
+      status: state.status,
+      task: state.task,
+      parentToolCallId: state.parentToolCallId,
+      swarmIndex: state.swarmIndex,
+      runInBackground: state.runInBackground,
+      startedAt: state.startedAt,
+      durationMs: state.startedAt ? Math.max(1, state.lastAt - state.startedAt) : undefined,
+      toolCount: state.toolCount,
+      contextTokens: state.contextTokens,
+      tokens: state.tokens,
+      latestActivity: state.latestActivity,
+      result: state.result
+    })
+  }
+
+  /** 子代理自己的文本与工具活动只更新 Swarm 成员，不进入主 Agent 轨道。 */
+  private handleSubagentActivity(
+    sessionId: string,
+    type: string,
+    payload: UnknownRecord,
+    now: number
+  ): boolean {
+    if (type.startsWith('subagent.')) return false
+    const agentId = typeof payload.agentId === 'string' ? payload.agentId : null
+    if (!agentId || agentId === 'main') return false
+    const state = this.subagents.get(sessionId)?.get(agentId)
+    // 未知子代理事件也不得伪装成主 Agent 消息或工具调用。
+    if (!state) return true
+
+    state.lastAt = now
+    if ((type === 'assistant.delta' || type === 'thinking.delta') && typeof payload.delta === 'string') {
+      state.latestModelText = `${state.latestModelText}${payload.delta}`.slice(-2_000)
+      state.latestActivity = compactActivity(state.latestModelText)
+    } else if (type === 'tool.call.started') {
+      state.toolCount += 1
+      const name = typeof payload.name === 'string' ? payload.name : 'Tool'
+      const detail = compactActivity(payload.display ?? payload.args)
+      state.latestActivity = detail ? `${name} · ${detail}` : name
+    } else if (type === 'tool.progress') {
+      state.latestActivity = compactActivity(payload.update) || state.latestActivity
+    } else if (type === 'tool.result' && payload.isError === true) {
+      state.latestActivity = compactActivity(payload.output) || '工具执行失败'
+    } else if (type === 'agent.status.updated') {
+      const usageRoot = isRecord(payload.usage) ? payload.usage : null
+      const usage = usageRoot && isRecord(usageRoot.total)
+        ? usageRoot.total
+        : usageRoot && isRecord(usageRoot.currentTurn)
+          ? usageRoot.currentTurn
+          : usageRoot
+      const tokens = tokenUsageTotal(usage)
+      if (tokens !== undefined) state.tokens = Math.max(state.tokens ?? 0, tokens)
+      const contextTokens = finiteNumber(payload.contextTokens)
+      if (contextTokens !== null && contextTokens >= 0) {
+        state.contextTokens = Math.max(state.contextTokens ?? 0, contextTokens)
+      }
+    }
+    this.emitSubagent(state)
+    return true
+  }
+
+  private settleActiveSubagents(
+    sessionId: string,
+    status: Extract<SatelliteEvent['status'], 'failed' | 'cancelled'>,
+    result: string
+  ): void {
+    const states = this.subagents.get(sessionId)
+    if (!states) return
+    const now = Date.now()
+    for (const state of states.values()) {
+      if (['done', 'failed', 'cancelled'].includes(state.status)) continue
+      state.status = status
+      state.result = result
+      state.latestActivity = result
+      state.lastAt = now
+      this.emitSubagent(state)
+    }
+  }
+
+  private discardSettledSubagents(sessionId: string): void {
+    const states = this.subagents.get(sessionId)
+    if (!states) return
+    for (const [subagentId, state] of states) {
+      if (['done', 'failed', 'cancelled'].includes(state.status)) states.delete(subagentId)
+    }
+    if (!states.size) this.subagents.delete(sessionId)
+  }
+
   private handleSessionEvent(sessionId: string, type: string, payload: UnknownRecord): void {
     const now = Date.now()
+    if (this.handleSubagentActivity(sessionId, type, payload, now)) return
     if (type === 'prompt.submitted') {
       this.activeToolCalls.delete(sessionId)
+      this.discardSettledSubagents(sessionId)
       const content = Array.isArray(payload.content) ? payload.content : []
       const text = content
         .filter(isRecord)
@@ -1819,26 +1989,52 @@ export class KimiClientService {
       return
     }
     if (type === 'subagent.spawned') {
-      this.upsertEvent(sessionId, {
-        id: `subagent-${String(payload.subagentId ?? randomUUID())}`,
-        kind: 'satellite',
-        at: now,
-        satelliteKind: satelliteKind(payload.subagentName),
-        status: 'launching',
-        task: typeof payload.description === 'string' ? payload.description : '子代理任务'
-      })
+      const subagentId = String(payload.subagentId ?? randomUUID())
+      const state = this.subagentRuntime(sessionId, subagentId, now)
+      state.satelliteKind = satelliteKind(payload.subagentName)
+      state.status = 'launching'
+      state.task = typeof payload.description === 'string' ? payload.description : '子代理任务'
+      state.parentToolCallId = typeof payload.parentToolCallId === 'string'
+        ? payload.parentToolCallId
+        : undefined
+      const swarmIndex = finiteNumber(payload.swarmIndex)
+      state.swarmIndex = swarmIndex !== null && swarmIndex > 0 ? Math.floor(swarmIndex) : undefined
+      state.runInBackground = payload.runInBackground === true
+      state.lastAt = now
+      this.emitSubagent(state)
+      this.emit({ kind: 'session-patch', sessionId, patch: { phase: 'gibbous' } })
       return
     }
-    if (type === 'subagent.started' || type === 'subagent.completed' || type === 'subagent.failed') {
-      this.upsertEvent(sessionId, {
-        id: `subagent-${String(payload.subagentId ?? 'active')}`,
-        kind: 'satellite',
-        at: now,
-        satelliteKind: 'coder',
-        status: type === 'subagent.started' ? 'in-orbit' : type === 'subagent.failed' ? 'failed' : 'done',
-        task: '子代理任务',
-        result: textOf(payload.resultSummary ?? payload.error)
-      })
+    if (
+      type === 'subagent.started' ||
+      type === 'subagent.suspended' ||
+      type === 'subagent.completed' ||
+      type === 'subagent.failed'
+    ) {
+      const subagentId = String(payload.subagentId ?? 'active')
+      const state = this.subagentRuntime(sessionId, subagentId, now)
+      state.lastAt = now
+      if (type === 'subagent.started') {
+        state.status = 'in-orbit'
+        state.startedAt ??= now
+        state.result = undefined
+      } else if (type === 'subagent.suspended') {
+        state.status = 'suspended'
+        state.result = compactActivity(payload.reason) || '等待速率限制恢复'
+        state.latestActivity = state.result
+      } else if (type === 'subagent.completed') {
+        state.status = 'done'
+        state.result = textOf(payload.resultSummary)
+        const tokens = tokenUsageTotal(payload.usage)
+        if (tokens !== undefined) state.tokens = Math.max(state.tokens ?? 0, tokens)
+        const contextTokens = finiteNumber(payload.contextTokens)
+        if (contextTokens !== null && contextTokens >= 0) state.contextTokens = contextTokens
+      } else {
+        const error = textOf(payload.error)
+        state.status = /abort|cancel|interrupt|手动终止|取消/i.test(error) ? 'cancelled' : 'failed'
+        state.result = error
+      }
+      this.emitSubagent(state)
       return
     }
     if (type === 'event.session.work_changed') {
@@ -1939,6 +2135,16 @@ export class KimiClientService {
     if (type === 'turn.ended' || type === 'prompt.completed' || type === 'prompt.aborted') {
       this.finishThinking(sessionId, now)
       this.activeToolCalls.delete(sessionId)
+      if (type === 'prompt.aborted') {
+        this.settleActiveSubagents(sessionId, 'cancelled', '主请求已终止')
+      } else if (
+        type === 'turn.ended' &&
+        typeof payload.reason === 'string' &&
+        payload.reason !== 'completed'
+      ) {
+        const reason = compactActivity(payload.reason) || '主请求未完成'
+        this.settleActiveSubagents(sessionId, 'failed', reason)
+      }
       this.emit({
         kind: 'session-patch',
         sessionId,

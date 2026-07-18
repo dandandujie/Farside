@@ -99,6 +99,10 @@ export const MOCK_SESSION: Session = {
       at: T0 + 1000 * 32,
       satelliteKind: 'coder',
       status: 'done',
+      swarmIndex: 1,
+      durationMs: 48_400,
+      toolCount: 7,
+      tokens: 18_620,
       task: '把折叠状态迁移到 zustand store，保持 SessionList 与 TrajectoryView 同步',
       result: '已迁移：collapsedMap 入 store，两处订阅粒度收窄到事件 id。'
     },
@@ -108,6 +112,10 @@ export const MOCK_SESSION: Session = {
       at: T0 + 1000 * 32,
       satelliteKind: 'explore',
       status: 'done',
+      swarmIndex: 2,
+      durationMs: 35_800,
+      toolCount: 5,
+      tokens: 12_940,
       task: '排查 streaming 期间 scrollIntoView 是否引发抖动',
       result: '每 token 触发一次 smooth 滚动会抖动；改为事件数变化时滚动一次即可。'
     },
@@ -117,6 +125,10 @@ export const MOCK_SESSION: Session = {
       at: T0 + 1000 * 32,
       satelliteKind: 'plan',
       status: 'done',
+      swarmIndex: 3,
+      durationMs: 26_100,
+      toolCount: 3,
+      tokens: 8_270,
       task: '核对 aria-live 区域在月相切换时的朗读行为',
       result: 'aria-live="polite" 足够；月相 svg 需 aria-label，已一并补上。'
     },

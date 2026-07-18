@@ -5,7 +5,7 @@ import { GoalBar } from './GoalBar'
 import { GroundNode } from './nodes/GroundNode'
 import { TransmissionNode } from './nodes/TransmissionNode'
 import { InstrumentNode } from './nodes/InstrumentNode'
-import { SatelliteNode } from './nodes/SatelliteNode'
+import { SatelliteGroup, SatelliteNode } from './nodes/SatelliteNode'
 import { ApprovalNode } from './nodes/ApprovalNode'
 import { MessageNode } from './nodes/MessageNode'
 import { TelemetryNode } from './nodes/TelemetryNode'
@@ -132,6 +132,7 @@ type NarrativeItem =
   | { kind: 'event'; event: TrajectoryEvent }
   | { kind: 'activity'; id: string; events: TrajectoryEvent[] }
   | { kind: 'thinking'; id: string; events: Extract<TrajectoryEvent, { kind: 'transmission' }>[] }
+  | { kind: 'swarm'; id: string; events: Extract<TrajectoryEvent, { kind: 'satellite' }>[] }
 
 /** 正文消息是阅读边界；边界之间的所有工具统一收成一个活动组。 */
 function groupNarrative(events: TrajectoryEvent[]): NarrativeItem[] {
@@ -139,13 +140,24 @@ function groupNarrative(events: TrajectoryEvent[]): NarrativeItem[] {
   let segment: TrajectoryEvent[] = []
   const flushSegment = () => {
     if (!segment.length) return
-    const activity = segment.filter((event) => event.kind === 'instrument')
+    const satellites = segment.filter((event): event is Extract<TrajectoryEvent, { kind: 'satellite' }> => event.kind === 'satellite')
+    const satelliteGroups = new Map<string, typeof satellites>()
+    for (const event of satellites) {
+      const key = event.parentToolCallId ?? 'unscoped'
+      satelliteGroups.set(key, [...(satelliteGroups.get(key) ?? []), event])
+    }
+    const activity = segment.filter((event) => {
+      if (event.kind !== 'instrument') return false
+      if (!satellites.length) return true
+      return !/^(agent|agent.?swarm)$/i.test(event.tool.replace(/[^a-z]/gi, ''))
+    })
     const thinking = segment.filter((event): event is Extract<TrajectoryEvent, { kind: 'transmission' }> => event.kind === 'transmission')
     let activityInserted = false
     let thinkingInserted = false
+    const swarmsInserted = new Set<string>()
     for (const event of segment) {
       if (event.kind === 'instrument') {
-        if (!activityInserted) {
+        if (!activityInserted && activity.length && activity.some((item) => item.id === event.id)) {
           items.push({ kind: 'activity', id: `activity-${activity[0].id}`, events: activity })
           activityInserted = true
         }
@@ -153,6 +165,13 @@ function groupNarrative(events: TrajectoryEvent[]): NarrativeItem[] {
         if (!thinkingInserted) {
           items.push({ kind: 'thinking', id: `thinking-batch-${thinking[0].id}`, events: thinking })
           thinkingInserted = true
+        }
+      } else if (event.kind === 'satellite') {
+        const key = event.parentToolCallId ?? 'unscoped'
+        if (!swarmsInserted.has(key)) {
+          const group = satelliteGroups.get(key) ?? [event]
+          items.push({ kind: 'swarm', id: `swarm-${group[0].id}`, events: group })
+          swarmsInserted.add(key)
         }
       } else {
         items.push({ kind: 'event', event })
@@ -212,7 +231,9 @@ function NarrativeEvents({ events, phase, lastId, live = false }: { events: Traj
             ? <ActivityBatch events={item.events} phase={phase} lastId={lastId} live={live} />
             : item.kind === 'thinking'
               ? <ThinkingBatch events={item.events} phase={phase} lastId={lastId} />
-              : renderNode(item.event, item.event.id === lastId, phase)}
+              : item.kind === 'swarm'
+                ? <SatelliteGroup events={item.events} />
+                : renderNode(item.event, item.event.id === lastId, phase)}
         </div>
       ))}
     </>

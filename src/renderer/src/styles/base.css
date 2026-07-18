@@ -91,6 +91,200 @@ button {
   animation: caret-breathe 1.2s var(--ease-farside) infinite;
 }
 
+/* ── Agent Swarm：参考 Kimi TUI 的总览、编号网格与 Braille 活动条 ─ */
+.swarm-panel {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--regolith) 52%, transparent);
+}
+
+.swarm-panel[data-active='true']::before {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--prism);
+  content: '';
+  opacity: 0.74;
+}
+
+.swarm-panel__header {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  gap: 9px;
+  text-align: left;
+}
+
+.swarm-panel__header:hover {
+  background: color-mix(in srgb, var(--crater) 48%, transparent);
+}
+
+.swarm-panel__title {
+  background: var(--prism);
+  background-clip: text;
+  color: transparent;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+  -webkit-background-clip: text;
+}
+
+.swarm-panel__count {
+  min-width: 22px;
+  padding: 0 5px;
+  border-left: 1px solid var(--line-hi);
+  color: var(--faint);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+}
+
+.swarm-panel__summary {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swarm-panel__aggregate {
+  display: flex;
+  width: 100%;
+  height: 2px;
+  padding: 0 10px;
+  gap: 1px;
+}
+
+.swarm-panel__aggregate > span {
+  min-width: 2px;
+  flex: 1;
+  opacity: 0.72;
+  transition: background-color 180ms var(--ease-farside), opacity 180ms var(--ease-farside);
+}
+
+.swarm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(218px, 1fr));
+  max-height: 286px;
+  overflow-y: auto;
+  padding: 9px 10px 10px;
+  gap: 6px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.swarm-member {
+  min-width: 0;
+  padding: 8px 9px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--mare) 68%, transparent);
+}
+
+.swarm-member[data-status='in-orbit'],
+.swarm-member[data-status='launching'] {
+  border-color: var(--line-hi);
+}
+
+.swarm-member__header {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.swarm-member__index {
+  color: var(--ghost);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.swarm-member__kind {
+  overflow: hidden;
+  color: var(--dust);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swarm-member__status {
+  justify-self: end;
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+}
+
+.swarm-member__signal {
+  width: fit-content;
+  margin-top: 4px;
+  font-size: 10px;
+  letter-spacing: -0.04em;
+  opacity: 0.78;
+}
+
+.swarm-member__signal--active {
+  animation: swarm-signal-breathe 1.25s var(--ease-farside) infinite;
+}
+
+@keyframes swarm-signal-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.swarm-member__task {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--moonlight);
+  font-size: 11.5px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.swarm-member__metrics {
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--ghost);
+  font-size: 8.5px;
+  letter-spacing: 0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swarm-member__activity {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+@media (max-width: 920px) {
+  .swarm-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── 工作月相：真实月相保持不变，仅外层轨道旋转并产生轻微月光 ─── */
 @keyframes moon-orbit-spin {
   to {

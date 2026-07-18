@@ -134,6 +134,16 @@ void app.whenReady().then(async () => {
         const detail = await win.webContents.capturePage()
         writeFileSync(join(outDir, 'turns-tool-detail.png'), detail.toPNG())
         console.log(`[shot] turns-tool-detail -> ${join(outDir, 'turns-tool-detail.png')}`)
+
+        await win.webContents.executeJavaScript(`(() => {
+          const header = document.querySelector('.swarm-panel__header')
+          if (header?.getAttribute('aria-expanded') !== 'true') header?.click()
+          header?.scrollIntoView({ block: 'center' })
+        })()`)
+        await sleep(220)
+        const swarm = await win.webContents.capturePage()
+        writeFileSync(join(outDir, 'turns-swarm.png'), swarm.toPNG())
+        console.log(`[shot] turns-swarm -> ${join(outDir, 'turns-swarm.png')}`)
       }
 
       // main 附加一张 main-clear：点击审批卡「允许一次」（顺带验证 data-approval-card 接线），

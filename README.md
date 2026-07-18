@@ -59,23 +59,6 @@ npm run dist                # 为当前操作系统生成安装包
 
 发布构建机需先通过 Kimi 官方安装器准备单文件 runtime，或用 `FARSIDE_KIMI_BINARY` 指定它；`npm run dist` 会记录版本与 SHA-256 并随安装包分发。终端用户安装 Farside 后无需另装 Kimi Code。Farside 优先启动随包 `kimi server`，仅在开发资源缺失时回退系统 PATH。
 
-## 自动发布
-
-推送任意新 tag 后，[Release workflow](.github/workflows/release.yml) 会在 GitHub 托管 Runner 中安装官方 Kimi Code runtime，分别生成 Windows NSIS、macOS DMG 与 Linux AppImage，并把三端安装包发布到对应的 GitHub Release。
-
-```powershell
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-工作流不会使用或上传开发机上的账户配置、API Key、OAuth Token、会话数据与本地 runtime。
-
-## 当前状态
-
-核心链路已经接通：随包 Kimi server 生命周期和鉴权、Workspace/Session 操作、WebSocket 流式事件、发送与附件、内部消息归一化、审批和提问、Goal、文件/Git/MCP、三类账户接入、OAuth 会员用量、中英/明暗界面、图片与文档侧边预览，以及 Windows NSIS 打包均已实现并完成本机验证。
-
-仍有明确边界：macOS DMG 尚未签名和实测；会员周期用量仅适用于 Kimi OAuth，API Key Provider 不提供会员额度；`node-pty` 是可选增强，默认使用 shell 管道终端。
-
 ## 结构
 
 ```text
@@ -86,16 +69,9 @@ src/renderer/   React 界面、状态仓库、设计系统与功能组件
 scripts/        runtime 准备、图标与视觉回归脚本
 ```
 
-## 隐私与安全
-
-- API Key、OAuth Token 与 Kimi server Bearer Token 只由 Electron 主进程处理，不回传渲染页。
-- 仓库忽略 `.env*`、证书与私钥、`config.toml`、`mcp.json`、`AGENTS.md`、会话数据、本地 runtime、日志和原始视觉回归输出。
-- 发布工作流始终从干净源码重新安装依赖与官方 runtime，不读取开发机环境。
-
 ## 致谢
 
 - [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) by Moonshot AI（月之暗面）
-- 字体：Space Grotesk · JetBrains Mono
 
 ## 许可证
 

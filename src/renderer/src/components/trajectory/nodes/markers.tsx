@@ -103,8 +103,14 @@ export function PrismTick() {
 
 /** Satellite：从主轨道分出的一段短弧 + 弧端小圆（卫星本体）。launching 时小圆呼吸。 */
 export function SatelliteArc({ status }: { status: SatelliteStatus }) {
-  const breathing = status === 'launching'
-  const stroke = status === 'done' ? 'var(--dust)' : status === 'failed' ? 'var(--ghost)' : 'var(--line-hi)'
+  const breathing = status === 'launching' || status === 'in-orbit'
+  const stroke = status === 'done'
+    ? 'var(--signal)'
+    : status === 'failed'
+      ? 'var(--redshift)'
+      : status === 'cancelled' || status === 'suspended'
+        ? 'var(--flare)'
+        : 'var(--line-hi)'
   return (
     <svg
       aria-hidden

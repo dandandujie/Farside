@@ -72,7 +72,7 @@ export interface InstrumentEvent extends TrajectoryEventBase {
 }
 
 export type SatelliteKind = 'coder' | 'explore' | 'plan'
-export type SatelliteStatus = 'launching' | 'in-orbit' | 'done' | 'failed'
+export type SatelliteStatus = 'launching' | 'in-orbit' | 'suspended' | 'done' | 'failed' | 'cancelled'
 
 /** 卫星（子代理，从主轨道分出的并行节点） */
 export interface SatelliteEvent extends TrajectoryEventBase {
@@ -80,6 +80,18 @@ export interface SatelliteEvent extends TrajectoryEventBase {
   satelliteKind: SatelliteKind
   status: SatelliteStatus
   task: string
+  /** Agent/AgentSwarm 工具调用 id；用于把同批子代理聚合成一个轨道组。 */
+  parentToolCallId?: string
+  /** AgentSwarm 中从 1 开始的成员编号。 */
+  swarmIndex?: number
+  runInBackground?: boolean
+  startedAt?: number
+  durationMs?: number
+  toolCount?: number
+  contextTokens?: number
+  tokens?: number
+  /** 子代理最新一条模型或工具活动，保持单行短文本。 */
+  latestActivity?: string
   /** 完成后的结论摘要 */
   result?: string
 }

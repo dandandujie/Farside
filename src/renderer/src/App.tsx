@@ -142,6 +142,23 @@ export default function App() {
               durationMs: 420 + index * 90,
               output: `已完成第 ${index + 1} 项检查。\n${'输出内容用于验证详情区域的固定高度与滚动行为。\n'.repeat(8)}`
             })),
+            ...([
+              ['coder', '实现会话内的 Swarm 事件聚合与自动收纳', 1, 8, 18_620, 48_400],
+              ['explore', '核对 Kimi Code 终端中的子代理树与状态语义', 2, 5, 12_940, 35_800],
+              ['plan', '检查窄窗口下成员网格与汇总状态的可读性', 3, 3, 8_270, 26_100]
+            ] as const).map(([satelliteKind, task, swarmIndex, toolCount, tokens, durationMs]) => ({
+              id: `shot-swarm-${swarmIndex}`,
+              kind: 'satellite' as const,
+              at: now - 6_800,
+              satelliteKind,
+              status: 'done' as const,
+              task,
+              swarmIndex,
+              toolCount,
+              tokens,
+              durationMs,
+              result: '已完成并将结果回传给主 Agent。'
+            })),
             {
               id: 'shot-message-after-tools',
               kind: 'message' as const,
