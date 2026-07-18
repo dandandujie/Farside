@@ -28,10 +28,6 @@ jobs:
             os: macos-latest
             target: mac
             artifact: dist/*.dmg
-          - label: Linux
-            os: ubuntu-latest
-            target: linux
-            artifact: dist/*.AppImage
 
     steps:
       - name: Checkout
@@ -51,8 +47,8 @@ jobs:
         shell: pwsh
         run: irm https://code.kimi.com/kimi-code/install.ps1 | iex
 
-      - name: Install official Kimi Code runtime (macOS/Linux)
-        if: runner.os != 'Windows'
+      - name: Install official Kimi Code runtime (macOS)
+        if: runner.os == 'macOS'
         shell: bash
         run: curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
 
