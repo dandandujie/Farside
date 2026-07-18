@@ -1,0 +1,85 @@
+{
+  "name": "farside",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "Farside Contributors",
+  "description": "Farside — Kimi Code Desktop (Electron + React)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dandandujie/Farside.git"
+  },
+  "homepage": "https://github.com/dandandujie/Farside#readme",
+  "bugs": {
+    "url": "https://github.com/dandandujie/Farside/issues"
+  },
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "runtime:prepare": "node scripts/prepare-kimi-runtime.mjs",
+    "dist": "npm run runtime:prepare && electron-vite build && electron-builder"
+  },
+  "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.1.1",
+    "@fontsource/space-grotesk": "^5.1.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "smol-toml": "^1.7.0",
+    "ws": "^8.21.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.9.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^2.3.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~5.6.3",
+    "vite": "^5.4.10"
+  },
+  "build": {
+    "appId": "com.moonshot.farside",
+    "productName": "Farside",
+    "directories": {
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "resources/installer.nsh"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Development"
+    }
+  }
+}

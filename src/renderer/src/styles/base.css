@@ -1,0 +1,141 @@
+/* 基础层：字体栈、滚动条、selection、全局收敛。字体的 @import 在 main.tsx 中完成。 */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--void);
+  color: var(--moonlight);
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+  transition: background-color 180ms var(--ease-farside), color 180ms var(--ease-farside);
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 滚动条：极细、低对比，不抢戏 ─────────────────────────────── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+  border: 2px solid var(--void);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--line-hi);
+}
+
+/* ── 选中：月光压暗，不用彩色 ─────────────────────────────────── */
+::selection {
+  background: var(--line-hi);
+  color: var(--moonlight);
+}
+
+/* ── 可编辑区域恢复文本选择 ───────────────────────────────────── */
+input,
+textarea,
+[contenteditable],
+.selectable {
+  user-select: text;
+}
+
+input,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* ── streaming caret：1px prism 竖条，1.2s 呼吸 ───────────────── */
+@keyframes caret-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+.stream-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  border-radius: 2px;
+  background: var(--prism);
+  vertical-align: -0.15em;
+  animation: caret-breathe 1.2s var(--ease-farside) infinite;
+}
+
+/* ── 工作月相：真实月相保持不变，仅外层轨道旋转并产生轻微月光 ─── */
+@keyframes moon-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes moon-work-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--moonlight) 24%, transparent));
+  }
+  50% {
+    filter: drop-shadow(0 0 7px color-mix(in srgb, var(--moonlight) 58%, transparent));
+  }
+}
+.moon-phase--active {
+  animation: moon-work-glow 1.8s var(--ease-farside) infinite;
+}
+.moon-phase__orbit {
+  transform-origin: 12px 12px;
+  animation: moon-orbit-spin 2.4s linear infinite;
+}
+
+/* ── 通用过渡 ─────────────────────────────────────────────────── */
+.fade-in {
+  animation: fade-in 180ms var(--ease-farside) both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── 尊重 reduced-motion：全部动效可关 ────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

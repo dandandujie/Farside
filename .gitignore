@@ -1,0 +1,44 @@
+node_modules/
+out/
+dist/
+coverage/
+
+# Kimi Code runtime is fetched on the build machine.
+resources/runtime/*/kimi
+resources/runtime/*/kimi.exe
+resources/runtime/*/manifest.json
+
+# Local application and account configuration.
+/config.toml
+/mcp.json
+/AGENTS.md
+/server.token
+.kimi/
+.kimi-code/
+.codex/
+.agents/
+
+# Secrets and signing material.
+*.log
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.local
+
+# Internal design notes and raw visual-regression output.
+docs/
+shots/
+
+# Editor and OS files.
+.idea/
+.vscode/
+.tmp/
+tmp/
+.DS_Store
+Thumbs.db

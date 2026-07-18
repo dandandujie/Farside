@@ -1,0 +1,82 @@
+/**
+ * DESIGN.md 第二节色彩 token 的单一来源。
+ * CSS 变量（:root）供任意内联样式引用；@theme 让 Tailwind 生成 bg-void / text-dust 等工具类。
+ * --prism 是全 App 唯一彩色元素，只用于 1px hairline / caret / approval 顶边。
+ */
+@import 'tailwindcss';
+
+@theme {
+  --color-void: #0a0b0f;
+  --color-mare: #0e1016;
+  --color-regolith: #14161d;
+  --color-crater: #1b1e27;
+  --color-line: #22242e;
+  --color-line-hi: #2e313d;
+  --color-moonlight: #f0f1f4;
+  --color-dust: #a3a7b1;
+  --color-faint: #61656f;
+  --color-ghost: #3a3d47;
+  --color-redshift: #e06a6a;
+  --color-flare: #d9a05b;
+  --color-signal: #7fb69e;
+
+  --font-display:
+    'Space Grotesk', -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC',
+    sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', monospace;
+  --font-poetic: 'LXGW WenKai', 'Songti SC', serif;
+}
+
+:root,
+:root[data-theme='dark'] {
+  --void: #0a0b0f;
+  --mare: #0e1016;
+  --regolith: #14161d;
+  --crater: #1b1e27;
+  --line: #22242e;
+  --line-hi: #2e313d;
+  --moonlight: #f0f1f4;
+  --dust: #a3a7b1;
+  --faint: #61656f;
+  --ghost: #3a3d47;
+  --prism: linear-gradient(
+    90deg,
+    #ff5c5c 0%,
+    #ffb347 20%,
+    #f9f871 40%,
+    #4ade80 60%,
+    #4cc9f0 80%,
+    #b98cff 100%
+  );
+  --redshift: #e06a6a;
+  --flare: #d9a05b;
+  --signal: #7fb69e;
+
+  --ease-farside: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+:root[data-theme='light'] {
+  --void: #f4f4f0;
+  --mare: #ecece7;
+  --regolith: #ffffff;
+  --crater: #e2e3de;
+  --line: #d7d8d2;
+  --line-hi: #bfc1ba;
+  --moonlight: #17191f;
+  --dust: #3e424b;
+  --faint: #717680;
+  --ghost: #a4a8ae;
+  --redshift: #b94343;
+  --flare: #a66b23;
+  --signal: #2f7d62;
+  --prism: linear-gradient(
+    90deg,
+    #d84e4e 0%,
+    #cc791f 20%,
+    #aa941d 40%,
+    #2f8f57 60%,
+    #287fa4 80%,
+    #7652ae 100%
+  );
+  --ease-farside: cubic-bezier(0.22, 1, 0.36, 1);
+}

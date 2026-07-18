@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" style="background: #0a0b0f">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Farside</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; frame-src 'self' data: http: https:; child-src http: https:"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      /* 防白闪：在 CSS 加载前先把背景压暗 */
+      html,
+      body,
+      #root {
+        margin: 0;
+        height: 100%;
+        background: #0a0b0f;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>
