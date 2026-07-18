@@ -13,7 +13,8 @@ const pathCandidates = (process.env.PATH || '')
 const candidates = [
   process.env.FARSIDE_KIMI_BINARY,
   process.argv[2],
-  process.platform === 'win32' ? join(homedir(), '.kimi-code', 'bin', 'kimi.exe') : join(homedir(), '.local', 'bin', 'kimi'),
+  join(homedir(), '.kimi-code', 'bin', executable),
+  process.platform === 'win32' ? undefined : join(homedir(), '.local', 'bin', executable),
   ...pathCandidates
 ].filter(Boolean).map((value) => resolve(value))
 
