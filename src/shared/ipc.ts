@@ -22,6 +22,8 @@ import type {
 // ── 通道名 ────────────────────────────────────────────────────────
 export const IPC = {
   AppGetInfo: 'app:get-info',
+  AppCheckUpdate: 'app:check-update',
+  AppOpenUpdate: 'app:open-update',
   WindowMinimize: 'window:minimize',
   WindowToggleMaximize: 'window:toggle-maximize',
   WindowClose: 'window:close',
@@ -85,6 +87,17 @@ export interface AppInfo {
   electronVersion: string
   platform: NodeJS.Platform
   arch: string
+}
+
+/** GitHub Release 更新检查结果。Release 内容只作为纯文本展示。 */
+export interface AppUpdateInfo {
+  updateAvailable: boolean
+  currentVersion: string
+  latestVersion?: string
+  releaseName?: string
+  releaseNotes?: string
+  publishedAt?: string
+  assetName?: string
 }
 
 export interface CliStatus {
@@ -389,6 +402,8 @@ export type AgentUpdate =
 // ── invoke/handle 签名表 ──────────────────────────────────────────
 export interface IpcInvokeMap {
   [IPC.AppGetInfo]: { args: []; result: AppInfo }
+  [IPC.AppCheckUpdate]: { args: []; result: AppUpdateInfo }
+  [IPC.AppOpenUpdate]: { args: []; result: AgentActionResult }
   [IPC.WindowMinimize]: { args: []; result: void }
   [IPC.WindowToggleMaximize]: { args: []; result: boolean }
   [IPC.WindowClose]: { args: []; result: void }
@@ -451,6 +466,11 @@ export interface IpcInvokeMap {
 // ── preload 暴露给渲染端的 API 形状 ────────────────────────────────
 export interface FarsideApi {
   getAppInfo(): Promise<AppInfo>
+  update: {
+    check(): Promise<AppUpdateInfo>
+    /** 打开主进程最近一次校验过的安装包或 Release 页面。 */
+    open(): Promise<AgentActionResult>
+  }
   detectCli(): Promise<CliStatus>
   window: {
     minimize(): Promise<void>

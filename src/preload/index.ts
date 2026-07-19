@@ -9,6 +9,10 @@ import {
 
 const api: FarsideApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.AppGetInfo),
+  update: {
+    check: () => ipcRenderer.invoke(IPC.AppCheckUpdate),
+    open: () => ipcRenderer.invoke(IPC.AppOpenUpdate)
+  },
   detectCli: () => ipcRenderer.invoke(IPC.CliDetect),
   window: {
     minimize: () => ipcRenderer.invoke(IPC.WindowMinimize),

@@ -16,6 +16,7 @@ import { GoalsView } from './components/goals/GoalsView'
 import { SettingsView } from './components/settings/SettingsView'
 import { NoiseOverlay } from './design-system/NoiseOverlay'
 import { Onboarding } from './components/shell/Onboarding'
+import { UpdatePrompt } from './components/shell/UpdatePrompt'
 import { usePreferences } from './lib/preferences'
 
 export default function App() {
@@ -29,6 +30,8 @@ export default function App() {
   const approvalQueue = useFarsideStore((s) => s.approvalQueue)
   const questionQueue = useFarsideStore((s) => s.questionQueue)
   const lastError = useFarsideStore((s) => s.lastError)
+  const authReady = useFarsideStore((s) => s.authReady)
+  const sending = useFarsideStore((s) => s.sending)
   const active = useActiveSession()
 
   const handleBooted = useCallback(() => setBooted(), [setBooted])
@@ -274,6 +277,7 @@ export default function App() {
       <CommandPalette />
       <NoiseOverlay />
       <Onboarding />
+      <UpdatePrompt enabled={booted && authReady !== false && !sending} />
       {!booted ? <BootSplash onDone={handleBooted} /> : null}
     </div>
   )

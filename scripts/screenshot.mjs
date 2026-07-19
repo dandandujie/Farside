@@ -6,7 +6,7 @@
  *   node scripts/screenshot.mjs main diff  # 只拍指定场景
  *
  * 场景对应 App.tsx 的 dev-only 钩子（?shot=...）：
- *   main / palette / diff|files / goals / terminal / settings / account / preview / turns
+ *   main / palette / diff|files / goals / terminal / settings / account / preview / turns / update
  *
  * 产出：shots/<场景>.png（1440×900，deviceScaleFactor 1）
  *
@@ -38,7 +38,7 @@ const outDir = join(root, 'shots')
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
 app.commandLine.appendSwitch('no-sandbox')
 
-const ALL = ['main', 'palette', 'diff', 'files', 'goals', 'terminal', 'settings', 'settings-light', 'account', 'preview', 'image-input', 'turns', 'profile', 'project-menu', 'resize']
+const ALL = ['main', 'palette', 'diff', 'files', 'goals', 'terminal', 'settings', 'settings-light', 'account', 'preview', 'image-input', 'turns', 'profile', 'project-menu', 'resize', 'update']
 const targets = process.argv.slice(2).filter((s) => ALL.includes(s))
 const shots = targets.length > 0 ? targets : ALL
 

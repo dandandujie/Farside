@@ -8,11 +8,13 @@ import { PtyService } from './services/pty'
 import { ServerService } from './services/server'
 import { KimiClientService } from './services/kimi-client'
 import { ConfigurationService, CONFIGURATION_PATHS } from './services/configuration'
+import { UpdateService } from './services/update'
 
 const ptyService = new PtyService()
 const serverService = new ServerService()
 const kimiClient = new KimiClientService(serverService)
 const configurationService = new ConfigurationService()
+const updateService = new UpdateService()
 let configurationWatchStarted = false
 
 /** 注册全部 IPC handler。窗口控制按事件来源定位窗口，避免持有窗口引用。 */
@@ -33,6 +35,8 @@ export function registerIpcHandlers(): void {
       arch: process.arch
     }
   })
+  ipcMain.handle(IPC.AppCheckUpdate, () => updateService.check(app.getVersion()))
+  ipcMain.handle(IPC.AppOpenUpdate, () => updateService.open())
 
   ipcMain.handle(IPC.WindowMinimize, (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
