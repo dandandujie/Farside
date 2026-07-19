@@ -54,19 +54,20 @@ export async function readKimiServerToken(): Promise<string | null> {
 
 /** 带鉴权的健康探测；Kimi Server 默认所有 REST 路由都要求 bearer token。 */
 export async function probeKimiServer(): Promise<boolean> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
     const token = await readKimiServerToken()
     if (!token) return false
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
     const res = await fetch(`http://${HOST}:${KIMI_SERVER_PORT}/api/v1/healthz`, {
       signal: controller.signal,
       headers: { Authorization: `Bearer ${token}` }
     })
-    clearTimeout(timer)
     return res.ok
   } catch {
     return false
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -78,6 +79,7 @@ export class ServerService {
   private cliInstalled: boolean | null = null
   private startedByApp = false
   private runtime: Awaited<ReturnType<typeof resolveKimiRuntime>> | null = null
+  private startInFlight: Promise<ServerActionResult> | null = null
 
   private async ensureCli(): Promise<boolean> {
     if (this.cliInstalled !== null) return this.cliInstalled
@@ -108,6 +110,17 @@ export class ServerService {
   }
 
   async start(): Promise<ServerActionResult> {
+    if (this.startInFlight) return this.startInFlight
+    const operation = this.startOnce()
+    this.startInFlight = operation
+    try {
+      return await operation
+    } finally {
+      if (this.startInFlight === operation) this.startInFlight = null
+    }
+  }
+
+  private async startOnce(): Promise<ServerActionResult> {
     if (!(await this.ensureCli())) {
       return { ok: false, available: false, error: 'kimi CLI 未安装，无法拉起服务' }
     }

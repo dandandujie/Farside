@@ -1,6 +1,15 @@
 import { promises as fs } from 'node:fs'
-import { dirname } from 'node:path'
-import { app, ipcMain, BrowserWindow, dialog, shell, type OpenDialogOptions } from 'electron'
+import { dirname, isAbsolute, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import {
+  app,
+  ipcMain as electronIpcMain,
+  BrowserWindow,
+  dialog,
+  shell,
+  type IpcMainInvokeEvent,
+  type OpenDialogOptions
+} from 'electron'
 import { IPC, type AppInfo, type ConfigurationSnapshot } from '@shared/ipc'
 import { detectCli } from './services/cli-detect'
 import { discoverSessions } from './services/sessions'
@@ -9,6 +18,7 @@ import { ServerService } from './services/server'
 import { KimiClientService } from './services/kimi-client'
 import { ConfigurationService, CONFIGURATION_PATHS } from './services/configuration'
 import { UpdateService } from './services/update'
+import { isPathWithin, isSafeOpenTarget, isTrustedRendererUrl } from './security'
 
 const ptyService = new PtyService()
 const serverService = new ServerService()
@@ -16,6 +26,50 @@ const kimiClient = new KimiClientService(serverService)
 const configurationService = new ConfigurationService()
 const updateService = new UpdateService()
 let configurationWatchStarted = false
+const rendererUrl = process.env['ELECTRON_RENDERER_URL'] || pathToFileURL(join(__dirname, '../renderer/index.html')).href
+
+function assertTrustedSender(event: IpcMainInvokeEvent): void {
+  const frame = event.senderFrame
+  if (
+    event.sender.getType() !== 'window' ||
+    !frame ||
+    frame !== event.sender.mainFrame ||
+    !isTrustedRendererUrl(frame.url, rendererUrl)
+  ) {
+    throw new Error('拒绝来自非应用主窗口的 IPC 调用')
+  }
+}
+
+const ipcMain = {
+  handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+    electronIpcMain.handle(channel, (event, ...args) => {
+      assertTrustedSender(event)
+      return listener(event, ...args)
+    })
+  }
+}
+
+async function openWorkspacePath(target: unknown): Promise<{ ok: boolean; error?: string }> {
+  if (typeof target !== 'string' || target.length > 4_096 || !isAbsolute(target)) {
+    return { ok: false, error: '只能打开已注册项目中的绝对路径' }
+  }
+  const workspaceResult = await kimiClient.listWorkspaces()
+  if (!workspaceResult.ok) return { ok: false, error: workspaceResult.error || '项目列表读取失败' }
+  const workspace = workspaceResult.workspaces.find((item) => isPathWithin(item.root, target))
+  if (!workspace) return { ok: false, error: '目标不在已注册项目目录中' }
+  try {
+    const [root, path] = await Promise.all([fs.realpath(workspace.root), fs.realpath(target)])
+    if (!isPathWithin(root, path)) return { ok: false, error: '目标通过链接跳出了项目目录' }
+    await fs.stat(path)
+    if (!isSafeOpenTarget(path)) {
+      return { ok: false, error: '为防止意外执行，不能直接打开可执行文件或脚本' }
+    }
+    const error = await shell.openPath(path)
+    return error ? { ok: false, error } : { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : '目标路径不可用' }
+  }
+}
 
 /** 注册全部 IPC handler。窗口控制按事件来源定位窗口，避免持有窗口引用。 */
 export function registerIpcHandlers(): void {
@@ -25,7 +79,7 @@ export function registerIpcHandlers(): void {
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IPC.ConfigurationChanged, snapshot)
       }
-    })
+    }).catch(() => undefined)
   }
   ipcMain.handle(IPC.AppGetInfo, (): AppInfo => {
     return {
@@ -67,11 +121,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.SessionsDiscover, () => discoverSessions())
 
   ipcMain.handle(IPC.PtyCreate, (event, cwd?: string) => ptyService.create(event.sender, cwd))
-  ipcMain.handle(IPC.PtyWrite, (_event, id: string, data: string) => ptyService.write(id, data))
-  ipcMain.handle(IPC.PtyResize, (_event, id: string, cols: number, rows: number) =>
-    ptyService.resize(id, cols, rows)
+  ipcMain.handle(IPC.PtyWrite, (event, id: string, data: string) => ptyService.write(event.sender, id, data))
+  ipcMain.handle(IPC.PtyResize, (event, id: string, cols: number, rows: number) =>
+    ptyService.resize(event.sender, id, cols, rows)
   )
-  ipcMain.handle(IPC.PtyKill, (_event, id: string) => ptyService.kill(id))
+  ipcMain.handle(IPC.PtyKill, (event, id: string) => ptyService.kill(event.sender, id))
 
   ipcMain.handle(IPC.ServerStatus, () => serverService.status())
   ipcMain.handle(IPC.ServerStart, () => serverService.start())
@@ -154,8 +208,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.WorkspaceRename, (_event, input) => kimiClient.renameWorkspace(input.id, input.name))
   ipcMain.handle(IPC.WorkspaceRemove, (_event, input) => kimiClient.removeWorkspace(input.id))
   ipcMain.handle(IPC.WorkspaceOpen, async (_event, root: string) => {
-    const error = await shell.openPath(root)
-    return error ? { ok: false, error } : { ok: true }
+    return openWorkspacePath(root)
   })
 
   ipcMain.handle(IPC.ConfigurationGet, () => configurationService.get())
@@ -176,6 +229,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(
     IPC.ConfigurationOpen,
     async (_event, target: keyof ConfigurationSnapshot['paths']) => {
+      if (!Object.prototype.hasOwnProperty.call(CONFIGURATION_PATHS, target)) {
+        return { ok: false, error: '未知的配置目标' }
+      }
       const path = CONFIGURATION_PATHS[target]
       if (target === 'skills' || target === 'plugins') await fs.mkdir(path, { recursive: true })
       else {

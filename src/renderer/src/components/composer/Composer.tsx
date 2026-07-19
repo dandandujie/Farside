@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MODELS, PERMISSION_MODE_LABELS } from '@shared/types'
+import {
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_COUNT,
+  MAX_TOTAL_ATTACHMENT_BYTES
+} from '@shared/security'
 import { useFarsideStore } from '../../lib/store'
 import { MoonPhase } from '../../design-system/MoonPhase'
 import { PrismLine } from '../../design-system/PrismLine'
@@ -43,6 +48,7 @@ export function Composer() {
   const abortCurrent = useFarsideStore((s) => s.abortCurrent)
 
   const [refs, setRefs] = useState<FileRef[]>([])
+  const [attachmentError, setAttachmentError] = useState('')
   const [modelOpen, setModelOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [slashIdx, setSlashIdx] = useState(0)
@@ -155,17 +161,38 @@ export function Composer() {
   /** 选择、拖拽和剪贴板图片统一走这里。 */
   const handleFiles = async (files: FileList | File[] | null) => {
     if (!files) return
+    setAttachmentError('')
+    let nextCount = attachments.length
+    let nextBytes = attachments.reduce((total, attachment) => total + attachment.size, 0)
     for (const f of Array.from(files)) {
       if (!f.type.startsWith('image/') && !f.type.startsWith('video/')) continue
-      const dataBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => {
-          const result = typeof reader.result === 'string' ? reader.result : ''
-          resolve(result.slice(result.indexOf(',') + 1))
-        }
-        reader.onerror = () => reject(reader.error ?? new Error('附件读取失败'))
-        reader.readAsDataURL(f)
-      })
+      if (nextCount >= MAX_ATTACHMENT_COUNT) {
+        setAttachmentError(locale === 'en-US' ? `Up to ${MAX_ATTACHMENT_COUNT} attachments are allowed.` : `最多添加 ${MAX_ATTACHMENT_COUNT} 个附件。`)
+        break
+      }
+      if (f.size > MAX_ATTACHMENT_BYTES) {
+        setAttachmentError(locale === 'en-US' ? `${f.name} exceeds the 20 MiB limit.` : `${f.name} 超过 20 MiB 单文件上限。`)
+        continue
+      }
+      if (nextBytes + f.size > MAX_TOTAL_ATTACHMENT_BYTES) {
+        setAttachmentError(locale === 'en-US' ? 'Attachments exceed the 40 MiB total limit.' : '附件总大小不能超过 40 MiB。')
+        break
+      }
+      let dataBase64: string
+      try {
+        dataBase64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const result = typeof reader.result === 'string' ? reader.result : ''
+            resolve(result.slice(result.indexOf(',') + 1))
+          }
+          reader.onerror = () => reject(reader.error ?? new Error('附件读取失败'))
+          reader.readAsDataURL(f)
+        })
+      } catch {
+        setAttachmentError(locale === 'en-US' ? `Could not read ${f.name}.` : `无法读取附件 ${f.name}。`)
+        continue
+      }
       addAttachment({
         id: `att-${crypto.randomUUID()}`,
         name: f.name,
@@ -174,6 +201,8 @@ export function Composer() {
         vision: true,
         dataBase64
       })
+      nextCount += 1
+      nextBytes += f.size
     }
   }
 
@@ -565,6 +594,11 @@ export function Composer() {
                 </button>
               </span>
             )})}
+          </div>
+        ) : null}
+        {attachmentError ? (
+          <div role="alert" style={{ margin: '-2px 0 8px', fontSize: 10.5, color: 'var(--redshift)' }}>
+            {attachmentError}
           </div>
         ) : null}
 

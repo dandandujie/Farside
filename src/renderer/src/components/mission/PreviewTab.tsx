@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { WebviewTag } from 'electron'
+import { normalizePreviewUrl } from '@shared/security'
 import { SectionLabel } from '../../design-system/SectionLabel'
 import { useFarsideStore } from '../../lib/store'
 import { Markdown } from '../trajectory/Markdown'
@@ -21,19 +22,10 @@ function HtmlPreview({ source, revision }: { source: string; revision: number })
   )
 }
 
-function normalizedUrl(value: string): string | null {
-  try {
-    const raw = value.trim()
-    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `http://${raw}`)
-    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : null
-  } catch {
-    return null
-  }
-}
-
 /** 预览页的开发浏览器：真实 Electron webview，支持导航历史和页面交互。 */
 function MiniBrowser({ initialUrl, onClose, english }: { initialUrl: string; onClose(): void; english: boolean }) {
   const webviewRef = useRef<WebviewTag>(null)
+  const partition = useMemo(() => `farside-preview-${crypto.randomUUID()}`, [])
   const [address, setAddress] = useState(initialUrl)
   const [currentUrl, setCurrentUrl] = useState(initialUrl)
   const [pageTitle, setPageTitle] = useState('')
@@ -93,7 +85,7 @@ function MiniBrowser({ initialUrl, onClose, english }: { initialUrl: string; onC
   }, [english])
 
   const navigate = () => {
-    const next = normalizedUrl(address)
+    const next = normalizePreviewUrl(address)
     if (!next) {
       setError(english ? 'Enter a valid HTTP(S) address.' : '请输入有效的 HTTP(S) 地址。')
       return
@@ -147,12 +139,12 @@ function MiniBrowser({ initialUrl, onClose, english }: { initialUrl: string; onC
           <webview
             ref={webviewRef}
             src={initialUrl}
-            partition="persist:farside-preview"
+            partition={partition}
             webpreferences="contextIsolation=yes, nodeIntegration=no, sandbox=yes"
             style={{ display: 'inline-flex', width: '100%', height: '100%' }}
           />
         ) : (
-          <iframe title="开发浏览器" src={currentUrl} sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-same-origin" style={{ width: '100%', height: '100%', border: 0 }} />
+          <iframe title="开发浏览器" src={currentUrl} sandbox="allow-scripts allow-forms allow-modals allow-same-origin" style={{ width: '100%', height: '100%', border: 0 }} />
         )}
       </div>
     </div>
@@ -170,7 +162,7 @@ export function PreviewTab() {
   const [url, setUrl] = useState('http://localhost:5173')
   const [urlError, setUrlError] = useState('')
   const openDevelopmentPreview = () => {
-    const next = normalizedUrl(url)
+    const next = normalizePreviewUrl(url)
     if (!next) {
       setUrlError(english ? 'Enter a valid HTTP(S) address.' : '请输入有效的 HTTP(S) 地址。')
       return
@@ -189,7 +181,7 @@ export function PreviewTab() {
       <div style={{ padding: 18 }}>
         <SectionLabel>{english ? 'BROWSER / PREVIEW' : '浏览器 / 预览'}</SectionLabel>
         <p style={{ margin: '14px 0 12px', fontSize: 12, lineHeight: 1.7, color: 'var(--faint)' }}>
-          {english ? 'Open a running development server here to operate the frontend without leaving Farside, or preview a project file from Files.' : '把正在运行的开发服务直接打开在这里，可在 Farside 内操作前端；也可从“文件”页预览项目文件。'}
+          {english ? 'Open a loopback development server here to operate the frontend without leaving Farside, or preview a project file from Files.' : '把本机回环地址上的开发服务直接打开在这里，可在 Farside 内操作前端；也可从“文件”页预览项目文件。'}
         </p>
         <div style={{ display: 'flex', gap: 6 }}>
           <input

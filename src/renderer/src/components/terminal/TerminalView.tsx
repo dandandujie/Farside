@@ -134,9 +134,14 @@ export function TerminalView() {
   useEffect(() => {
     if (link !== 'ready' || !pendingCommand || !ptyIdRef.current || !window.api) return
     const command = pendingCommand.command.replace(/\r?\n/g, '\r')
-    void window.api.pty.write(ptyIdRef.current, `${command}\r`)
     consumeTerminalCommand(pendingCommand.id)
-  }, [consumeTerminalCommand, link, pendingCommand])
+    const approved = window.confirm(
+      locale === 'en-US'
+        ? `Run this model-provided command in the terminal?\n\n${pendingCommand.command}`
+        : `确认在终端执行这段由模型提供的命令？\n\n${pendingCommand.command}`
+    )
+    if (approved) void window.api.pty.write(ptyIdRef.current, `${command}\r`)
+  }, [consumeTerminalCommand, link, locale, pendingCommand])
 
   return (
     <div

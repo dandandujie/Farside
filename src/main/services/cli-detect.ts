@@ -7,7 +7,7 @@ import { resolveKimiRuntime } from './kimi-runtime'
 
 const TIMEOUT_MS = 5_000
 
-function run(command: string, args: string[]): Promise<string> {
+function run(command: string, bundled: boolean, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       command,
@@ -16,7 +16,7 @@ function run(command: string, args: string[]): Promise<string> {
         timeout: TIMEOUT_MS,
         windowsHide: true,
         // Windows 上全局安装的 CLI 多为 .cmd shim，不经 shell 无法 execFile
-        shell: process.platform === 'win32'
+        shell: process.platform === 'win32' && !bundled
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -51,7 +51,7 @@ export async function detectCli(): Promise<CliStatus> {
   const runtime = await resolveKimiRuntime()
   let version: string
   try {
-    version = await run(runtime.command, ['--version'])
+    version = await run(runtime.command, runtime.bundled, ['--version'])
   } catch (error) {
     return {
       installed: false,
@@ -64,7 +64,7 @@ export async function detectCli(): Promise<CliStatus> {
   // 命令不支持时回退到 config.toml 存在性判定；两者都不行就是 null。
   let loggedIn: boolean | null = null
   try {
-    const out = await run(runtime.command, ['auth', 'status'])
+    const out = await run(runtime.command, runtime.bundled, ['auth', 'status'])
     loggedIn = !/not\s+logged\s+in|unauthorized|未登录/i.test(out)
   } catch {
     loggedIn = await detectLoginByConfig()

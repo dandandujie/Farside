@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { WebContents } from 'electron'
 import { IPC, type PtyBackend, type PtyCreateResult, type PtyDataPayload } from '@shared/ipc'
@@ -26,6 +27,7 @@ interface NodePtyModule {
 
 /** 统一的终端句柄：node-pty 与管道子进程都收敛成这三个动作 */
 interface PtyHandle {
+  ownerId: number
   backend: PtyBackend
   shell: string
   write(data: string): void
@@ -34,6 +36,7 @@ interface PtyHandle {
 }
 
 const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe'
+const MAX_PTY_INPUT_CHARS = 1024 * 1024
 /** 进程退出时写进终端的一行提示（等宽、暗色，由 xterm 直接渲染） */
 const EXIT_NOTICE = (code: number | null): string =>
   `\r\n\x1b[2m链路关闭 · 进程已退出${code === null ? '' : `（code ${code}）`}\x1b[0m\r\n`
@@ -58,7 +61,7 @@ function shellArgs(shell: string): string[] {
  */
 export class PtyService {
   private handles = new Map<string, PtyHandle>()
-  private seq = 0
+  private watchedOwners = new Set<number>()
   /** node-pty 只尝试加载一次，结果（含失败）缓存 */
   private nodePty: NodePtyModule | null | undefined
 
@@ -75,16 +78,32 @@ export class PtyService {
   }
 
   async create(sender: WebContents, cwd?: string): Promise<PtyCreateResult> {
-    const id = `pty-${++this.seq}-${Date.now()}`
+    const id = `pty-${randomUUID()}`
     const shell = pickShell()
-    // cwd 无效时落回家目录，避免 spawn 同步抛错
-    const workDir = cwd && existsSync(cwd) ? cwd : homedir()
+    let workDir = homedir()
+    if (typeof cwd === 'string' && cwd.length <= 4_096 && existsSync(cwd)) {
+      try {
+        if (statSync(cwd).isDirectory()) workDir = cwd
+      } catch {
+        // 目录在检查期间消失时使用家目录。
+      }
+    }
+    if (!this.watchedOwners.has(sender.id)) {
+      this.watchedOwners.add(sender.id)
+      sender.once('destroyed', () => {
+        this.disposeOwner(sender.id)
+        this.watchedOwners.delete(sender.id)
+      })
+    }
+    let exited = false
     const send = (data: string): void => {
       if (!sender.isDestroyed()) {
         sender.send(IPC.PtyData, { id, data } satisfies PtyDataPayload)
       }
     }
     const onExit = (code: number | null): void => {
+      if (exited) return
+      exited = true
       this.handles.delete(id)
       send(EXIT_NOTICE(code))
     }
@@ -102,6 +121,7 @@ export class PtyService {
         pty.onData(send)
         pty.onExit((e) => onExit(e.exitCode))
         this.handles.set(id, {
+          ownerId: sender.id,
           backend: 'node-pty',
           shell,
           write: (data) => pty.write(data),
@@ -133,6 +153,7 @@ export class PtyService {
     child.stdout?.on('data', (data: string) => send(data))
     child.stderr?.on('data', (data: string) => send(data))
     this.handles.set(id, {
+      ownerId: sender.id,
       backend: 'pipe',
       shell,
       write: (data) => {
@@ -149,19 +170,48 @@ export class PtyService {
     return { ok: true, id, backend: 'pipe', shell }
   }
 
-  write(id: string, data: string): void {
-    this.handles.get(id)?.write(data)
+  private ownedHandle(sender: WebContents, id: unknown): PtyHandle | undefined {
+    if (typeof id !== 'string') return undefined
+    const handle = this.handles.get(id)
+    return handle?.ownerId === sender.id ? handle : undefined
   }
 
-  resize(id: string, cols: number, rows: number): void {
+  write(sender: WebContents, id: string, data: string): void {
+    if (typeof data !== 'string' || data.length > MAX_PTY_INPUT_CHARS) return
+    this.ownedHandle(sender, id)?.write(data)
+  }
+
+  resize(sender: WebContents, id: string, cols: number, rows: number): void {
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
     try {
-      this.handles.get(id)?.resize(cols, rows)
+      this.ownedHandle(sender, id)?.resize(
+        Math.max(1, Math.min(1_000, Math.trunc(cols))),
+        Math.max(1, Math.min(500, Math.trunc(rows)))
+      )
     } catch {
       // 尺寸竞争（进程刚好退出）：忽略
     }
   }
 
-  kill(id: string): void {
+  kill(sender: WebContents, id: string): void {
+    const handle = this.ownedHandle(sender, id)
+    if (!handle) return
+    this.killHandle(id)
+  }
+
+  /** App 退出前清场，不留孤儿 shell 进程 */
+  disposeAll(): void {
+    for (const id of [...this.handles.keys()]) this.killHandle(id)
+    this.watchedOwners.clear()
+  }
+
+  private disposeOwner(ownerId: number): void {
+    for (const [id, handle] of this.handles) {
+      if (handle.ownerId === ownerId) this.killHandle(id)
+    }
+  }
+
+  private killHandle(id: string): void {
     const handle = this.handles.get(id)
     this.handles.delete(id)
     try {
@@ -169,10 +219,5 @@ export class PtyService {
     } catch {
       // 已经退出：无需处理
     }
-  }
-
-  /** App 退出前清场，不留孤儿 shell 进程 */
-  disposeAll(): void {
-    for (const id of [...this.handles.keys()]) this.kill(id)
   }
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { promises as fs, watch as watchFs, type FSWatcher } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -13,6 +14,7 @@ import type {
 } from '@shared/ipc'
 
 const ROOT = process.env['KIMI_CODE_HOME'] || join(homedir(), '.kimi-code')
+const MAX_CONFIGURATION_BYTES = 2 * 1024 * 1024
 
 export const CONFIGURATION_PATHS: ConfigurationSnapshot['paths'] = {
   config: join(ROOT, 'config.toml'),
@@ -55,8 +57,8 @@ async function readText(path: string, fallback = ''): Promise<string> {
 
 async function writeAtomic(path: string, content: string): Promise<void> {
   await fs.mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.${process.pid}.tmp`
-  await fs.writeFile(temporary, content, 'utf8')
+  const temporary = `${path}.${randomUUID()}.tmp`
+  await fs.writeFile(temporary, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
   try {
     await fs.rename(temporary, path)
   } catch (error) {
@@ -65,6 +67,7 @@ async function writeAtomic(path: string, content: string): Promise<void> {
     await fs.copyFile(temporary, path)
     await fs.unlink(temporary).catch(() => undefined)
   }
+  await fs.chmod(path, 0o600).catch(() => undefined)
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -215,6 +218,7 @@ function githubCloneUrl(source: string): string | null {
 async function materializeSource(source: string): Promise<MaterializedSource> {
   const trimmed = source.trim().replace(/^"|"$/g, '')
   if (!trimmed) throw new Error('请输入本地目录或 GitHub 仓库地址')
+  if (trimmed.length > 2_048) throw new Error('扩展来源地址过长')
   if (isAbsolute(trimmed)) {
     const stat = await fs.stat(trimmed).catch(() => null)
     if (!stat?.isDirectory()) throw new Error('本地来源必须是存在的目录')
@@ -225,7 +229,7 @@ async function materializeSource(source: string): Promise<MaterializedSource> {
   const cleanup = await fs.mkdtemp(join(tmpdir(), 'farside-skill-'))
   const root = join(cleanup, 'source')
   try {
-    await runGit(['clone', '--depth', '1', cloneUrl, root])
+    await runGit(['clone', '--depth', '1', '--', cloneUrl, root])
     return { root, cleanup }
   } catch (error) {
     await fs.rm(cleanup, { recursive: true, force: true })
@@ -290,6 +294,18 @@ async function installSkill(source: string): Promise<void> {
   }
 }
 
+async function managedSkillPath(path: string): Promise<string> {
+  if (basename(path).toLowerCase() !== 'skill.md') throw new Error('只能管理 Skill 清单文件')
+  const [root, candidate] = await Promise.all([
+    fs.realpath(CONFIGURATION_PATHS.skills),
+    fs.realpath(path)
+  ])
+  if (!isWithin(root, candidate) || resolve(dirname(candidate)) === resolve(root)) {
+    throw new Error('只能管理 Kimi 用户目录中的 Skill')
+  }
+  return candidate
+}
+
 export class ConfigurationService {
   private watcher: FSWatcher | null = null
   private watchTimer: NodeJS.Timeout | null = null
@@ -323,6 +339,16 @@ export class ConfigurationService {
 
   async save(input: ConfigurationSaveInput): Promise<ConfigurationResult> {
     try {
+      if (
+        !input ||
+        !['config', 'mcp', 'instructions'].includes(input.target) ||
+        typeof input.content !== 'string'
+      ) {
+        throw new Error('配置保存参数无效')
+      }
+      if (Buffer.byteLength(input.content, 'utf8') > MAX_CONFIGURATION_BYTES) {
+        throw new Error('单个配置文件不能超过 2 MiB')
+      }
       if (input.target === 'mcp') validateMcp(input.content)
       if (input.target === 'config') parseToml(input.content)
       await writeAtomic(CONFIGURATION_PATHS[input.target], input.content)
@@ -338,19 +364,21 @@ export class ConfigurationService {
         const id = normalizeExtensionId(input.name, 'Skill')
         const target = join(CONFIGURATION_PATHS.skills, id, 'SKILL.md')
         if (await fs.stat(target).then(() => true).catch(() => false)) throw new Error(`Skill ${id} 已存在`)
-        const description = input.description.trim() || `${id} skill`
+        const description = input.description.trim().slice(0, 1_000) || `${id} skill`
         await writeAtomic(target, `---\nname: ${id}\ndescription: ${JSON.stringify(description)}\ndisableModelInvocation: false\n---\n\n# ${id}\n\n在这里编写 Skill 指令。\n`)
       } else if (input.kind === 'skill' && input.action === 'install') {
         await installSkill(input.source)
       } else if (input.kind === 'skill' && input.action === 'toggle') {
-        if (basename(input.path).toLowerCase() !== 'skill.md' || !isWithin(CONFIGURATION_PATHS.skills, dirname(input.path))) throw new Error('只能管理 Kimi 用户目录中的 Skill')
-        const source = await fs.readFile(input.path, 'utf8')
-        await writeAtomic(input.path, setSkillAutoInvocation(source, input.enabled))
+        const path = await managedSkillPath(input.path)
+        const source = await fs.readFile(path, 'utf8')
+        await writeAtomic(path, setSkillAutoInvocation(source, input.enabled))
       } else if (input.kind === 'skill' && input.action === 'remove') {
-        if (basename(input.path).toLowerCase() !== 'skill.md' || !isWithin(CONFIGURATION_PATHS.skills, dirname(input.path)) || resolve(dirname(input.path)) === resolve(CONFIGURATION_PATHS.skills)) throw new Error('只能移除 Kimi 用户目录中的 Skill')
-        await fs.rm(dirname(input.path), { recursive: true, force: true })
+        const path = await managedSkillPath(input.path)
+        await fs.rm(dirname(path), { recursive: true, force: true })
       } else if (input.kind === 'plugin') {
         throw new Error('Plugin 操作必须通过 Kimi PluginService 执行')
+      } else {
+        throw new Error('不支持的扩展操作')
       }
       return this.get()
     } catch (error) {

@@ -34,6 +34,14 @@ import {
   type WorkspaceReadResult
 } from '@shared/ipc'
 import {
+  isAllowedApiBaseUrl,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_COUNT,
+  MAX_FILE_REFERENCE_COUNT,
+  MAX_PROMPT_CHARS,
+  MAX_TOTAL_ATTACHMENT_BYTES
+} from '@shared/security'
+import {
   fromKimiServerModel,
   toKimiServerModel,
   type AccountModelInfo,
@@ -50,9 +58,14 @@ import {
   type TrajectoryEvent
 } from '@shared/types'
 import { readKimiServerToken, type ServerService } from './server'
+import { sanitizeZipFileName } from '../security'
 
 const BASE_URL = `http://127.0.0.1:${KIMI_SERVER_PORT}`
 const WS_URL = `ws://127.0.0.1:${KIMI_SERVER_PORT}/api/v1/ws`
+const REQUEST_TIMEOUT_MS = 30_000
+const EXPORT_TIMEOUT_MS = 120_000
+const MAX_EXPORT_BYTES = 256 * 1024 * 1024
+const MAX_WS_PAYLOAD_BYTES = 8 * 1024 * 1024
 
 interface ApiEnvelope<T> {
   code: number
@@ -134,6 +147,39 @@ type UnknownRecord = Record<string, unknown>
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null
+}
+
+function decodedBase64Size(value: string): number | null {
+  if (!value || value.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 4) return null
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return null
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
+  return Math.floor(value.length * 3 / 4) - padding
+}
+
+function isBoundedString(value: unknown, max: number, allowEmpty = false): value is string {
+  return typeof value === 'string' && value.length <= max && (allowEmpty || value.length > 0)
+}
+
+async function readBoundedResponse(response: Response, maxBytes: number): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0)
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new Error(`响应体超过 ${Math.floor(maxBytes / 1024 / 1024)} MiB`)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total)
 }
 
 function textOf(value: unknown, max = 4_000): string {
@@ -648,6 +694,7 @@ export class KimiClientService {
     if (!token) throw new Error('未找到 Kimi Server token')
     const res = await fetch(`${BASE_URL}${path}`, {
       ...init,
+      signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
         Authorization: `Bearer ${token}`,
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
@@ -859,14 +906,28 @@ export class KimiClientService {
 
   async configureAccount(input: AccountConfigureInput): Promise<AccountResult> {
     try {
+      if (
+        !input ||
+        !['kimi-api', 'openai-compatible'].includes(input.kind) ||
+        typeof input.apiKey !== 'string' ||
+        typeof input.model !== 'string' ||
+        typeof input.baseUrl !== 'string'
+      ) {
+        throw new Error('Provider 类型无效')
+      }
       const apiKey = input.apiKey.trim()
       const model = input.model.trim()
-      const url = new URL(input.baseUrl.trim())
+      const rawBaseUrl = input.baseUrl.trim()
+      if (!isAllowedApiBaseUrl(rawBaseUrl)) {
+        throw new Error('Base URL 必须使用 HTTPS；仅本机回环地址可使用 HTTP，且不能包含凭据、查询或片段')
+      }
+      const url = new URL(rawBaseUrl)
       const contextWindow = finiteNumber(input.contextWindow) ?? 262_144
-      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Base URL 必须使用 HTTP(S)')
       if (!apiKey) throw new Error('API Key 不能为空')
+      if (apiKey.length > 16_384) throw new Error('API Key 长度异常')
       if (!model) throw new Error('模型 ID 不能为空')
-      if (contextWindow <= 0) throw new Error('上下文窗口必须是正数')
+      if (model.length > 512) throw new Error('模型 ID 过长')
+      if (contextWindow <= 0 || contextWindow > 10_000_000) throw new Error('上下文窗口必须在 1 到 10000000 之间')
       const baseUrl = url.toString().replace(/\/$/, '')
       const providerId = input.kind === 'kimi-api' ? 'farside:kimi-api' : 'farside:openai'
       const slug = model.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'model'
@@ -925,6 +986,7 @@ export class KimiClientService {
 
   async createWorkspace(root: string): Promise<WorkspaceResult> {
     try {
+      if (!isBoundedString(root, 4_096)) throw new Error('项目路径无效')
       const remote = await this.request<RemoteWorkspace>('/api/v1/workspaces', {
         method: 'POST',
         body: JSON.stringify({ root })
@@ -937,6 +999,7 @@ export class KimiClientService {
 
   async renameWorkspace(id: string, name: string): Promise<WorkspaceResult> {
     try {
+      if (!isBoundedString(id, 512) || !isBoundedString(name, 512)) throw new Error('项目重命名参数无效')
       const remote = await this.request<RemoteWorkspace>(
         `/api/v1/workspaces/${encodeURIComponent(id)}`,
         { method: 'PATCH', body: JSON.stringify({ name }) }
@@ -949,6 +1012,7 @@ export class KimiClientService {
 
   async removeWorkspace(id: string): Promise<AgentActionResult> {
     try {
+      if (!isBoundedString(id, 512)) throw new Error('项目 ID 无效')
       await this.request(`/api/v1/workspaces/${encodeURIComponent(id)}`, { method: 'DELETE' })
       return { ok: true }
     } catch (error) {
@@ -1064,6 +1128,17 @@ export class KimiClientService {
 
   async createSession(input: AgentSessionCreateInput): Promise<AgentSessionResult> {
     try {
+      if (
+        !input ||
+        !isBoundedString(input.model, 512) ||
+        !['manual', 'auto', 'yolo'].includes(input.permissionMode) ||
+        typeof input.planMode !== 'boolean' ||
+        typeof input.swarmMode !== 'boolean' ||
+        (input.cwd !== undefined && !isBoundedString(input.cwd, 4_096)) ||
+        (input.title !== undefined && !isBoundedString(input.title, 1_024, true))
+      ) {
+        throw new Error('新建会话参数无效')
+      }
       const remote = await this.request<RemoteSession>('/api/v1/sessions', {
         method: 'POST',
         body: JSON.stringify({
@@ -1090,6 +1165,9 @@ export class KimiClientService {
 
   async renameSession(input: AgentSessionRenameInput): Promise<AgentSessionResult> {
     try {
+      if (!input || !isBoundedString(input.sessionId, 512) || !isBoundedString(input.title, 1_024)) {
+        throw new Error('会话重命名参数无效')
+      }
       const remote = await this.request<RemoteSession>(
         `/api/v1/sessions/${encodeURIComponent(input.sessionId)}:rename`,
         { method: 'POST', body: JSON.stringify({ title: input.title }) }
@@ -1122,7 +1200,8 @@ export class KimiClientService {
     const res = await fetch(`${BASE_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}/export`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS)
     })
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as ApiEnvelope<unknown> | null
@@ -1131,14 +1210,33 @@ export class KimiClientService {
     const disposition = res.headers.get('content-disposition') ?? ''
     const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
     const plain = /filename="?([^";]+)"?/i.exec(disposition)?.[1]
-    const fileName = encoded
-      ? decodeURIComponent(encoded)
-      : plain || `${sessionId.replace(/[^a-zA-Z0-9._-]/g, '_')}.zip`
-    return { data: Buffer.from(await res.arrayBuffer()), fileName }
+    const declaredSize = Number(res.headers.get('content-length'))
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_EXPORT_BYTES) {
+      throw new Error('会话导出包超过 256 MiB，已拒绝载入内存')
+    }
+    let suggested = plain || ''
+    if (encoded) {
+      try {
+        suggested = decodeURIComponent(encoded)
+      } catch {
+        suggested = encoded
+      }
+    }
+    const data = await readBoundedResponse(res, MAX_EXPORT_BYTES)
+    const fallback = sessionId.replace(/[^a-zA-Z0-9._-]/g, '_') || 'kimi-session'
+    return { data, fileName: sanitizeZipFileName(suggested, fallback) }
   }
 
   async runSessionAction(input: AgentSessionActionInput): Promise<AgentActionResult> {
     try {
+      if (
+        !input ||
+        !isBoundedString(input.sessionId, 512) ||
+        !['abort', 'compact', 'undo'].includes(input.action) ||
+        (input.instruction !== undefined && !isBoundedString(input.instruction, MAX_PROMPT_CHARS, true))
+      ) {
+        throw new Error('会话动作参数无效')
+      }
       const body =
         input.action === 'compact' && input.instruction
           ? { instruction: input.instruction }
@@ -1172,6 +1270,44 @@ export class KimiClientService {
 
   async submitPrompt(input: AgentPromptInput): Promise<AgentActionResult> {
     try {
+      if (!input || typeof input.sessionId !== 'string' || !input.sessionId) throw new Error('会话 ID 无效')
+      if (typeof input.text !== 'string' || input.text.length > MAX_PROMPT_CHARS) {
+        throw new Error('提示词不能超过 200000 个字符')
+      }
+      if (!Array.isArray(input.fileRefs) || input.fileRefs.length > MAX_FILE_REFERENCE_COUNT) {
+        throw new Error('引用文件数量超过上限')
+      }
+      if (input.fileRefs.some((path) => typeof path !== 'string' || path.length > 4_096)) {
+        throw new Error('引用文件路径无效')
+      }
+      if (!Array.isArray(input.attachments) || input.attachments.length > MAX_ATTACHMENT_COUNT) {
+        throw new Error(`附件数量不能超过 ${MAX_ATTACHMENT_COUNT} 个`)
+      }
+      if (typeof input.model !== 'string' || !input.model || input.model.length > 512) {
+        throw new Error('模型 ID 无效')
+      }
+      if (
+        input.goalObjective !== undefined &&
+        (typeof input.goalObjective !== 'string' || input.goalObjective.length > MAX_PROMPT_CHARS)
+      ) {
+        throw new Error('目标文本过长')
+      }
+      let totalAttachmentBytes = 0
+      for (const attachment of input.attachments) {
+        if (!attachment || typeof attachment.dataBase64 !== 'string') throw new Error('附件缺少可发送数据')
+        if (typeof attachment.name !== 'string' || attachment.name.length > 1_024) throw new Error('附件名称无效')
+        if (!/^(?:image|video)\/[a-z0-9.+-]+$/i.test(attachment.mimeType)) throw new Error('附件媒体类型无效')
+        const bytes = decodedBase64Size(attachment.dataBase64)
+        if (bytes === null || bytes > MAX_ATTACHMENT_BYTES) throw new Error(`单个附件不能超过 ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MiB`)
+        totalAttachmentBytes += bytes
+        if (totalAttachmentBytes > MAX_TOTAL_ATTACHMENT_BYTES) {
+          throw new Error(`附件总大小不能超过 ${MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024} MiB`)
+        }
+      }
+      if (!['manual', 'auto', 'yolo'].includes(input.permissionMode)) throw new Error('权限模式无效')
+      if (typeof input.planMode !== 'boolean' || typeof input.swarmMode !== 'boolean') {
+        throw new Error('会话模式参数无效')
+      }
       // 必须先订阅再提交，避免 prompt.submitted 比 POST 响应更早到达而丢失用户事件。
       this.subscribe(input.sessionId)
       const referenceText = input.fileRefs.length
@@ -1208,6 +1344,15 @@ export class KimiClientService {
 
   async resolveApproval(input: AgentApprovalInput): Promise<AgentActionResult> {
     try {
+      if (
+        !input ||
+        !isBoundedString(input.sessionId, 512) ||
+        !isBoundedString(input.approvalId, 512) ||
+        !['allow-once', 'allow-always', 'deny'].includes(input.decision) ||
+        (input.feedback !== undefined && !isBoundedString(input.feedback, 4_000, true))
+      ) {
+        throw new Error('审批参数无效')
+      }
       const decision = input.decision === 'deny' ? 'rejected' : 'approved'
       await this.request(
         `/api/v1/sessions/${encodeURIComponent(input.sessionId)}/approvals/${encodeURIComponent(input.approvalId)}`,
@@ -1233,6 +1378,13 @@ export class KimiClientService {
 
   async controlGoal(input: AgentGoalControlInput): Promise<AgentActionResult> {
     try {
+      if (
+        !input ||
+        !isBoundedString(input.sessionId, 512) ||
+        !['pause', 'resume', 'cancel'].includes(input.control)
+      ) {
+        throw new Error('目标控制参数无效')
+      }
       await this.request(`/api/v1/sessions/${encodeURIComponent(input.sessionId)}/profile`, {
         method: 'POST',
         body: JSON.stringify({ agent_config: { goal_control: input.control } })
@@ -1247,11 +1399,33 @@ export class KimiClientService {
 
   async resolveQuestion(input: AgentQuestionInput): Promise<AgentActionResult> {
     try {
+      if (
+        !input ||
+        !isBoundedString(input.sessionId, 512) ||
+        !isBoundedString(input.questionRequestId, 512) ||
+        !isRecord(input.answers) ||
+        Object.keys(input.answers).length > 100
+      ) {
+        throw new Error('问题应答参数无效')
+      }
       const answers = Object.fromEntries(
         Object.entries(input.answers).map(([id, answer]) => {
-          if (answer.kind === 'single') return [id, { kind: 'single', option_id: answer.optionId }]
-          if (answer.kind === 'multi') return [id, { kind: 'multi', option_ids: answer.optionIds }]
-          return [id, { kind: 'other', text: answer.text }]
+          if (!isBoundedString(id, 512) || !isRecord(answer)) throw new Error('问题答案无效')
+          if (answer.kind === 'single' && isBoundedString(answer.optionId, 512)) {
+            return [id, { kind: 'single', option_id: answer.optionId }]
+          }
+          if (
+            answer.kind === 'multi' &&
+            Array.isArray(answer.optionIds) &&
+            answer.optionIds.length <= 100 &&
+            answer.optionIds.every((optionId) => isBoundedString(optionId, 512))
+          ) {
+            return [id, { kind: 'multi', option_ids: answer.optionIds }]
+          }
+          if (answer.kind === 'other' && isBoundedString(answer.text, 4_000, true)) {
+            return [id, { kind: 'other', text: answer.text }]
+          }
+          throw new Error('问题答案无效')
         })
       )
       await this.request(
@@ -1462,17 +1636,25 @@ export class KimiClientService {
     input: Extract<ConfigurationManageInput, { kind: 'plugin' }>
   ): Promise<AgentActionResult> {
     try {
+      if (!input || !['install', 'toggle', 'remove'].includes(input.action)) {
+        throw new Error('Plugin 操作无效')
+      }
       if (input.action === 'install') {
+        if (!isBoundedString(input.source, 2_048)) throw new Error('Plugin 来源无效')
         await this.request('/api/v2/pluginService/installPlugin', {
           method: 'POST',
           body: JSON.stringify({ source: input.source })
         })
       } else if (input.action === 'toggle') {
+        if (!isBoundedString(input.id, 512) || typeof input.enabled !== 'boolean') {
+          throw new Error('Plugin 状态参数无效')
+        }
         await this.request('/api/v2/pluginService/setPluginEnabled', {
           method: 'POST',
           body: JSON.stringify({ id: input.id, enabled: input.enabled })
         })
       } else {
+        if (!isBoundedString(input.id, 512)) throw new Error('Plugin ID 无效')
         await this.request('/api/v2/pluginService/removePlugin', {
           method: 'POST',
           body: JSON.stringify({ id: input.id })
@@ -1641,7 +1823,11 @@ export class KimiClientService {
     if (!token) throw new Error('未找到 Kimi Server token')
     this.disposed = false
     await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(WS_URL, { headers: { Authorization: `Bearer ${token}` } })
+      const socket = new WebSocket(WS_URL, {
+        headers: { Authorization: `Bearer ${token}` },
+        handshakeTimeout: 10_000,
+        maxPayload: MAX_WS_PAYLOAD_BYTES
+      })
       this.socket = socket
       const fail = (error: Error): void => reject(error)
       socket.once('error', fail)
@@ -1705,7 +1891,9 @@ export class KimiClientService {
     const sessionId = typeof frame.session_id === 'string' ? frame.session_id : null
     const type = typeof frame.type === 'string' ? frame.type : null
     const payload = isRecord(frame.payload) ? frame.payload : null
-    if (sessionId && type && payload) this.handleSessionEvent(sessionId, type, payload)
+    if (sessionId && type && payload && this.subscriptions.has(sessionId)) {
+      this.handleSessionEvent(sessionId, type, payload)
+    }
   }
 
   private upsertEvent(

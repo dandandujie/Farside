@@ -500,7 +500,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     if (!api) return
     void api.loadSession(id).then((result) => {
       if (!result.ok || !result.session) {
-        set({ lastError: result.error ?? '会话加载失败' })
+        if (get().activeSessionId === id) set({ lastError: result.error ?? '会话加载失败' })
         return
       }
       set((state) => ({
@@ -513,7 +513,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           ...state.questionQueue.filter((item) => item.sessionId !== id),
           ...(result.questions ?? [])
         ],
-        goal: result.goal ?? null
+        goal: state.activeSessionId === id ? result.goal ?? null : state.goal
       }))
     })
   },
@@ -898,9 +898,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
             ? 'kimi-k3'
             : arg.includes('highspeed')
               ? 'kimi-for-coding-highspeed'
-              : arg
-                ? 'kimi-for-coding'
-                : null
+              : arg as ModelId || null
         if (picked) {
           get().setDraft('')
           get().setModel(picked)
