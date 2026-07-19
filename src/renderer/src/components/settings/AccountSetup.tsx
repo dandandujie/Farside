@@ -76,6 +76,7 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
   const initialize = useFarsideStore((state) => state.initialize)
   const configureAccount = useFarsideStore((state) => state.configureAccount)
   const account = useFarsideStore((state) => state.account)
+  const lastError = useFarsideStore((state) => state.lastError)
   const [kind, setKind] = useState<AccountProviderKind>('kimi-oauth')
   const [pending, setPending] = useState(false)
   const [verificationUri, setVerificationUri] = useState<string | null>(null)
@@ -122,6 +123,7 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
   const startOAuth = async () => {
     setPending(true)
     setLocalError(null)
+    useFarsideStore.setState({ lastError: null })
     setSaved(false)
     const result = await window.api?.agent.startLogin()
     if (!result) {
@@ -166,7 +168,7 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
     }
   }
 
-  const error = localError
+  const error = localError ?? (!account?.configured ? lastError : null)
   const activeKind = account?.providers.find((provider) => provider.active)?.kind
 
   return (
@@ -246,7 +248,13 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
                 fontSize: 12
               }}
             >
-              {pending ? (english ? 'Waiting…' : '等待授权…') : activeKind === 'kimi-oauth' ? (english ? 'Reauthorize' : '重新授权') : (english ? 'Sign in with Kimi' : '使用 Kimi 登录')}
+              {pending
+                ? verificationUri
+                  ? (english ? 'Waiting…' : '等待授权…')
+                  : (english ? 'Starting service…' : '正在启动服务…')
+                : activeKind === 'kimi-oauth'
+                  ? (english ? 'Reauthorize' : '重新授权')
+                  : (english ? 'Sign in with Kimi' : '使用 Kimi 登录')}
             </button>
           </div>
           {userCode ? (

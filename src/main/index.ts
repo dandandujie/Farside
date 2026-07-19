@@ -10,8 +10,10 @@ const rendererPath = join(__dirname, '../renderer/index.html')
 const rendererUrl = isDev
   ? process.env['ELECTRON_RENDERER_URL'] as string
   : pathToFileURL(rendererPath).href
+const smokeMode = process.env['FARSIDE_SMOKE_TEST']
 
 function openExternal(url: string): void {
+  if (smokeMode) return
   if (isAllowedExternalUrl(url)) void shell.openExternal(url).catch(() => undefined)
 }
 
@@ -75,13 +77,66 @@ function createWindow(): void {
   mainWindow.webContents.on('will-navigate', preventUntrustedNavigation)
   mainWindow.webContents.on('will-redirect', preventUntrustedNavigation)
 
-  if (process.env['FARSIDE_SMOKE_TEST'] === '1') {
+  if (smokeMode) {
     mainWindow.webContents.once('did-fail-load', (_event, code, description, url, isMainFrame) => {
       if (!isMainFrame) return
       console.error(`FARSIDE_SMOKE_TEST_FAILED ${code} ${description} ${url}`)
       app.exit(1)
     })
     mainWindow.webContents.once('did-finish-load', () => {
+      if (smokeMode === 'account' || smokeMode === 'login') {
+        const deadline = Date.now() + 45_000
+        const verifyLoginStarted = (): void => {
+          void mainWindow.webContents.executeJavaScript(
+            "document.body.innerText.includes('设备码') || document.body.innerText.includes('DEVICE CODE')"
+          ).then((started) => {
+            if (started) {
+              console.log(`FARSIDE_LOGIN_SMOKE_TEST_OK Electron ${process.versions.electron}`)
+              app.quit()
+            } else if (Date.now() >= deadline) {
+              console.error('FARSIDE_LOGIN_SMOKE_TEST_FAILED Kimi 设备码未显示')
+              app.exit(1)
+            } else {
+              setTimeout(verifyLoginStarted, 250)
+            }
+          }).catch((error) => {
+            console.error(`FARSIDE_LOGIN_SMOKE_TEST_FAILED ${error instanceof Error ? error.message : String(error)}`)
+            app.exit(1)
+          })
+        }
+        const verifyOnboarding = (): void => {
+          void mainWindow.webContents.executeJavaScript(
+            "document.body.innerText.includes('选择你的 Kimi 链路') || document.body.innerText.includes('Choose your Kimi connection')"
+          ).then((visible) => {
+            if (visible) {
+              if (smokeMode === 'account') {
+                console.log(`FARSIDE_ACCOUNT_SMOKE_TEST_OK Electron ${process.versions.electron}`)
+                app.quit()
+                return
+              }
+              void mainWindow.webContents.executeJavaScript(
+                "(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('使用 Kimi 登录') || item.textContent?.includes('Sign in with Kimi')); button?.click(); return Boolean(button) })()"
+              ).then((clicked) => {
+                if (!clicked) throw new Error('未找到 Kimi 登录按钮')
+                verifyLoginStarted()
+              }).catch((error) => {
+                console.error(`FARSIDE_LOGIN_SMOKE_TEST_FAILED ${error instanceof Error ? error.message : String(error)}`)
+                app.exit(1)
+              })
+            } else if (Date.now() >= deadline) {
+              console.error('FARSIDE_ACCOUNT_SMOKE_TEST_FAILED 首次账户设置未显示')
+              app.exit(1)
+            } else {
+              setTimeout(verifyOnboarding, 250)
+            }
+          }).catch((error) => {
+            console.error(`FARSIDE_ACCOUNT_SMOKE_TEST_FAILED ${error instanceof Error ? error.message : String(error)}`)
+            app.exit(1)
+          })
+        }
+        verifyOnboarding()
+        return
+      }
       console.log(`FARSIDE_SMOKE_TEST_OK Electron ${process.versions.electron}`)
       setTimeout(() => app.quit(), 250)
     })
@@ -97,7 +152,7 @@ function createWindow(): void {
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) {
-  if (process.env['FARSIDE_SMOKE_TEST'] === '1') app.exit(2)
+  if (smokeMode) app.exit(2)
   else app.quit()
 } else {
   app.on('second-instance', () => {

@@ -380,6 +380,21 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     try {
       const accountResult = await bridge.account.get()
       const account = accountResult.account ?? null
+      if (!accountResult.ok) {
+        set({
+          sessions: [],
+          activeSessionId: null,
+          approvalQueue: [],
+          questionQueue: [],
+          initialized: true,
+          connected: false,
+          authReady: false,
+          account,
+          quota: quotaFromAccount(account),
+          lastError: accountResult.error ?? '账户服务暂不可用，请重试'
+        })
+        return
+      }
       if (accountResult.ok && account && !account.configured) {
         set({
           sessions: [],
@@ -427,7 +442,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         approvalQueue: visualPreview ? [MOCK_APPROVAL] : [],
         initialized: true,
         connected: false,
-        authReady: visualPreview ? true : null,
+        authReady: visualPreview ? true : false,
         lastError: visualPreview
           ? null
           : error instanceof Error

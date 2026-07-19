@@ -10,8 +10,10 @@
   "include": [
     "src/main/security.ts",
     "src/main/services/runtime-manifest.ts",
+    "src/main/services/kimi-server-endpoint.ts",
     "src/shared/security.ts",
     "tests/security.test.ts",
-    "tests/runtime-manifest.test.ts"
+    "tests/runtime-manifest.test.ts",
+    "tests/kimi-server-endpoint.test.ts"
   ]
 }

@@ -5,8 +5,15 @@ import { join } from 'node:path'
 import { KIMI_SERVER_PORT, type ServerActionResult, type ServerStatus } from '@shared/ipc'
 import { detectCli } from './cli-detect'
 import { resolveKimiRuntime, type KimiRuntime } from './kimi-runtime'
+import {
+  isFarsideRuntimeEndpoint,
+  kimiServerOrigin,
+  readKimiServerEndpoint,
+  type KimiServerEndpoint
+} from './kimi-server-endpoint'
 
 const HOST = '127.0.0.1'
+const DEFAULT_ENDPOINT: KimiServerEndpoint = { host: HOST, port: KIMI_SERVER_PORT }
 const READY_TIMEOUT_MS = 15_000
 const POLL_INTERVAL_MS = 350
 const PROBE_TIMEOUT_MS = 1_500
@@ -63,16 +70,13 @@ export async function readKimiServerToken(): Promise<string | null> {
   return null
 }
 
-/** 带鉴权的健康探测；Kimi Server 默认所有 REST 路由都要求 bearer token。 */
-export async function probeKimiServer(): Promise<boolean> {
+/** healthz 是官方无鉴权探针；真正接入前仍会用 token 校验 meta 与能力。 */
+export async function probeKimiServer(endpoint = DEFAULT_ENDPOINT): Promise<boolean> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   try {
-    const token = await readKimiServerToken()
-    if (!token) return false
-    const res = await fetch(`http://${HOST}:${KIMI_SERVER_PORT}/api/v1/healthz`, {
-      signal: controller.signal,
-      headers: { Authorization: `Bearer ${token}` }
+    const res = await fetch(`${kimiServerOrigin(endpoint)}/api/v1/healthz`, {
+      signal: controller.signal
     })
     return res.ok
   } catch {
@@ -107,10 +111,10 @@ async function readBoundedJson(response: Response): Promise<unknown> {
 }
 
 /** 读取服务端自报版本与能力，用于阻止误连到同端口上的不兼容实例。 */
-export async function readKimiServerMeta(): Promise<KimiServerMeta> {
+export async function readKimiServerMeta(endpoint = DEFAULT_ENDPOINT): Promise<KimiServerMeta> {
   const token = await readKimiServerToken()
   if (!token) throw new Error('未找到 Kimi Server token')
-  const response = await fetch(`http://${HOST}:${KIMI_SERVER_PORT}/api/v1/meta`, {
+  const response = await fetch(`${kimiServerOrigin(endpoint)}/api/v1/meta`, {
     signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     headers: { Authorization: `Bearer ${token}` }
   })
@@ -132,8 +136,8 @@ export async function readKimiServerMeta(): Promise<KimiServerMeta> {
   }
 }
 
-async function assertKimiServerCompatibility(runtime: KimiRuntime): Promise<void> {
-  const meta = await readKimiServerMeta()
+async function assertKimiServerCompatibility(runtime: KimiRuntime, endpoint: KimiServerEndpoint): Promise<void> {
+  const meta = await readKimiServerMeta(endpoint)
   if (runtime.manifest && meta.serverVersion !== runtime.manifest.version) {
     throw new Error(`Kimi Server 版本不匹配：随包 runtime 为 ${runtime.manifest.version}，端口实例为 ${meta.serverVersion}`)
   }
@@ -149,6 +153,30 @@ export class ServerService {
   private startedByApp = false
   private runtime: Awaited<ReturnType<typeof resolveKimiRuntime>> | null = null
   private startInFlight: Promise<ServerActionResult> | null = null
+  private endpoint = DEFAULT_ENDPOINT
+
+  private async runningEndpoint(): Promise<KimiServerEndpoint | null> {
+    const locked = await readKimiServerEndpoint()
+    const candidates = [locked, this.endpoint, DEFAULT_ENDPOINT].filter(
+      (candidate): candidate is KimiServerEndpoint => candidate !== null
+    )
+    const seen = new Set<string>()
+    for (const candidate of candidates) {
+      const origin = kimiServerOrigin(candidate)
+      if (seen.has(origin)) continue
+      seen.add(origin)
+      if (await probeKimiServer(candidate)) return candidate
+    }
+    return null
+  }
+
+  baseUrl(): string {
+    return kimiServerOrigin(this.endpoint)
+  }
+
+  webSocketUrl(): string {
+    return `${this.baseUrl().replace(/^http:/, 'ws:')}/api/v1/ws`
+  }
 
   private async ensureCli(): Promise<boolean> {
     if (this.cliInstalled !== null) return this.cliInstalled
@@ -160,14 +188,16 @@ export class ServerService {
   }
 
   async status(): Promise<ServerStatus> {
-    const base = { port: KIMI_SERVER_PORT }
-    if (await probeKimiServer()) {
+    const running = await this.runningEndpoint()
+    const base = { port: running?.port ?? this.endpoint.port }
+    if (running) {
+      this.endpoint = running
       const available = await this.ensureCli()
       if (!available || !this.runtime) {
         return { ...base, available: false, running: true, managedByApp: false, error: this.cliError }
       }
       try {
-        await assertKimiServerCompatibility(this.runtime)
+        await assertKimiServerCompatibility(this.runtime, running)
       } catch (error) {
         return {
           ...base,
@@ -210,16 +240,22 @@ export class ServerService {
       return { ok: false, available: false, error: this.cliError || 'kimi CLI 未安装，无法拉起服务' }
     }
     const runtime = this.runtime ?? await resolveKimiRuntime()
-    if (await probeKimiServer()) {
+    const existing = await this.runningEndpoint()
+    if (existing) {
+      this.endpoint = existing
       try {
-        await assertKimiServerCompatibility(runtime)
+        await assertKimiServerCompatibility(runtime, existing)
         return { ok: true, available: true }
       } catch (error) {
-        return {
-          ok: false,
-          available: true,
-          error: error instanceof Error ? error.message : 'Kimi Server 兼容性校验失败'
+        if (!isFarsideRuntimeEndpoint(existing)) {
+          return {
+            ok: false,
+            available: true,
+            error: error instanceof Error ? error.message : 'Kimi Server 兼容性校验失败'
+          }
         }
+        await runKimi(runtime.command, runtime.bundled, ['server', 'kill'], 8_000).catch(() => {})
+        this.endpoint = DEFAULT_ENDPOINT
       }
     }
 
@@ -236,9 +272,11 @@ export class ServerService {
 
     const deadline = Date.now() + READY_TIMEOUT_MS
     while (Date.now() < deadline) {
-      if (await probeKimiServer()) {
+      const running = await this.runningEndpoint()
+      if (running) {
+        this.endpoint = running
         try {
-          await assertKimiServerCompatibility(runtime)
+          await assertKimiServerCompatibility(runtime, running)
         } catch (error) {
           await runKimi(runtime.command, runtime.bundled, ['server', 'kill'], 8_000).catch(() => {})
           return {
@@ -252,13 +290,17 @@ export class ServerService {
       }
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
     }
-    return { ok: false, available: true, error: '服务就绪超时（15s）' }
+    return {
+      ok: false,
+      available: true,
+      error: 'Kimi 服务未能就绪。请退出其他 Kimi Code/Farside 实例后重试。'
+    }
   }
 
   async stop(): Promise<ServerActionResult> {
     const available = await this.ensureCli()
     if (!available) return { ok: false, available: false, error: 'kimi CLI 未安装' }
-    if (!(await probeKimiServer())) {
+    if (!(await this.runningEndpoint())) {
       this.startedByApp = false
       return { ok: true, available: true }
     }

@@ -42,6 +42,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Build installer
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

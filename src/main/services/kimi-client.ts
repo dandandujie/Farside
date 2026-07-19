@@ -6,7 +6,6 @@ import type { WebContents } from 'electron'
 import WebSocket, { type RawData } from 'ws'
 import {
   IPC,
-  KIMI_SERVER_PORT,
   type AccountConfigureInput,
   type AccountResult,
   type ConfigurationManageInput,
@@ -61,8 +60,6 @@ import { readKimiServerToken, type ServerService } from './server'
 import { SUPPORTED_KIMI_WS_PROTOCOL_VERSION } from './runtime-manifest'
 import { sanitizeZipFileName } from '../security'
 
-const BASE_URL = `http://127.0.0.1:${KIMI_SERVER_PORT}`
-const WS_URL = `ws://127.0.0.1:${KIMI_SERVER_PORT}/api/v1/ws`
 const REQUEST_TIMEOUT_MS = 30_000
 const EXPORT_TIMEOUT_MS = 120_000
 const MAX_EXPORT_BYTES = 256 * 1024 * 1024
@@ -693,7 +690,7 @@ export class KimiClientService {
     if (!started.ok) throw new Error(started.error || 'Kimi Server 启动失败')
     const token = await readKimiServerToken()
     if (!token) throw new Error('未找到 Kimi Server token')
-    const res = await fetch(`${BASE_URL}${path}`, {
+    const res = await fetch(`${this.server.baseUrl()}${path}`, {
       ...init,
       signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
@@ -1198,7 +1195,7 @@ export class KimiClientService {
     if (!started.ok) throw new Error(started.error || 'Kimi Server 启动失败')
     const token = await readKimiServerToken()
     if (!token) throw new Error('未找到 Kimi Server token')
-    const res = await fetch(`${BASE_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}/export`, {
+    const res = await fetch(`${this.server.baseUrl()}/api/v1/sessions/${encodeURIComponent(sessionId)}/export`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -1824,7 +1821,7 @@ export class KimiClientService {
     if (!token) throw new Error('未找到 Kimi Server token')
     this.disposed = false
     await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(WS_URL, {
+      const socket = new WebSocket(this.server.webSocketUrl(), {
         headers: { Authorization: `Bearer ${token}` },
         handshakeTimeout: 10_000,
         maxPayload: MAX_WS_PAYLOAD_BYTES
