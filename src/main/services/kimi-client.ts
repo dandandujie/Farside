@@ -58,6 +58,7 @@ import {
   type TrajectoryEvent
 } from '@shared/types'
 import { readKimiServerToken, type ServerService } from './server'
+import { SUPPORTED_KIMI_WS_PROTOCOL_VERSION } from './runtime-manifest'
 import { sanitizeZipFileName } from '../security'
 
 const BASE_URL = `http://127.0.0.1:${KIMI_SERVER_PORT}`
@@ -1829,24 +1830,70 @@ export class KimiClientService {
         maxPayload: MAX_WS_PAYLOAD_BYTES
       })
       this.socket = socket
-      const fail = (error: Error): void => reject(error)
-      socket.once('error', fail)
-      socket.once('open', () => {
+      const helloId = randomUUID()
+      let serverHello = false
+      let helloAck = false
+      let settled = false
+      const timer = setTimeout(() => finish(new Error('Kimi Server WebSocket 握手超时')), 10_000)
+      const fail = (error: Error): void => finish(error)
+      const closeBeforeHandshake = (): void => finish(new Error('Kimi Server WebSocket 在握手完成前关闭'))
+      const finish = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
         socket.off('error', fail)
+        socket.off('close', closeBeforeHandshake)
+        socket.off('message', handshake)
+        if (error) {
+          socket.close()
+          reject(error)
+        } else {
+          resolve()
+        }
+      }
+      const handshake = (data: RawData): void => {
+        let frame: UnknownRecord
+        try {
+          const parsed = JSON.parse(data.toString()) as unknown
+          if (!isRecord(parsed)) return
+          frame = parsed
+        } catch {
+          finish(new Error('Kimi Server WebSocket 返回无效 JSON'))
+          return
+        }
+        if (frame.type === 'server_hello') {
+          const payload = isRecord(frame.payload) ? frame.payload : null
+          if (payload?.protocol_version !== SUPPORTED_KIMI_WS_PROTOCOL_VERSION) {
+            finish(new Error(`Kimi Server WebSocket 协议不兼容：需要 ${SUPPORTED_KIMI_WS_PROTOCOL_VERSION}，实际为 ${String(payload?.protocol_version)}`))
+            return
+          }
+          serverHello = true
+        }
+        if (frame.type === 'ack' && frame.id === helloId) {
+          if (frame.code !== 0) {
+            finish(new Error(typeof frame.msg === 'string' ? frame.msg : 'Kimi Server client_hello 被拒绝'))
+            return
+          }
+          helloAck = true
+        }
+        if (serverHello && helloAck) finish()
+      }
+      socket.on('message', (data) => this.onMessage(data))
+      socket.on('message', handshake)
+      socket.once('error', fail)
+      socket.once('close', closeBeforeHandshake)
+      socket.once('open', () => {
         socket.send(
           JSON.stringify({
             type: 'client_hello',
-            id: randomUUID(),
+            id: helloId,
             payload: {
               client_id: `farside-${randomUUID()}`,
               subscriptions: [...this.subscriptions]
             }
           })
         )
-        this.emit({ kind: 'connection', connected: true })
-        resolve()
       })
-      socket.on('message', (data) => this.onMessage(data))
       socket.on('error', (error) => {
         this.emit({ kind: 'connection', connected: false, error: error.message })
       })
@@ -1856,6 +1903,7 @@ export class KimiClientService {
         this.scheduleReconnect()
       })
     })
+    this.emit({ kind: 'connection', connected: true })
   }
 
   private scheduleReconnect(): void {

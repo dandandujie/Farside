@@ -21,10 +21,13 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none .tmp/security-tests/tests/security.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none .tmp/security-tests/tests/security.test.js .tmp/security-tests/tests/runtime-manifest.test.js tests/runtime-lock.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "runtime:prepare": "node scripts/prepare-kimi-runtime.mjs",
-    "dist": "npm run runtime:prepare && electron-vite build && electron-builder"
+    "runtime:smoke": "node scripts/smoke-kimi-runtime.mjs",
+    "runtime:check": "node scripts/sync-kimi-runtime.mjs --check",
+    "runtime:sync": "node scripts/sync-kimi-runtime.mjs --write",
+    "dist": "npm run runtime:prepare && npm run runtime:smoke && electron-vite build && electron-builder"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.1.1",

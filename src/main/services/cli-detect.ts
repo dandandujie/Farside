@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { CliStatus } from '@shared/ipc'
-import { resolveKimiRuntime } from './kimi-runtime'
+import { resolveKimiRuntime, type KimiRuntime } from './kimi-runtime'
 
 const TIMEOUT_MS = 5_000
 
@@ -47,8 +47,17 @@ async function detectLoginByConfig(): Promise<boolean | null> {
  * 探测本机 kimi CLI：`kimi --version` 与登录态。
  * 任何一步失败都优雅降级，绝不抛出——渲染端据此展示「链路未建立」而非报错。
  */
-export async function detectCli(): Promise<CliStatus> {
-  const runtime = await resolveKimiRuntime()
+export async function detectCli(resolvedRuntime?: KimiRuntime): Promise<CliStatus> {
+  let runtime: KimiRuntime
+  try {
+    runtime = resolvedRuntime ?? await resolveKimiRuntime()
+  } catch (error) {
+    return {
+      installed: false,
+      loggedIn: null,
+      error: error instanceof Error ? error.message : 'Kimi Code runtime 校验失败'
+    }
+  }
   let version: string
   try {
     version = await run(runtime.command, runtime.bundled, ['--version'])

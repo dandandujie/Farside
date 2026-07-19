@@ -1,0 +1,80 @@
+name: Sync Kimi Code runtime
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: runtime-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Check upstream runtime
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update official runtime lock
+        id: runtime
+        run: node scripts/sync-kimi-runtime.mjs --write
+
+      - name: Verify update
+        if: steps.runtime.outputs.updated == 'true'
+        env:
+          FARSIDE_DOWNLOAD_KIMI_RUNTIME: '1'
+          FARSIDE_RUNTIME_CHANNEL: 'official'
+        run: |
+          npm test
+          npm run typecheck
+          npm run build
+          npm run runtime:prepare
+          npm run runtime:smoke
+
+      - name: Open or update pull request
+        if: steps.runtime.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNTIME_VERSION: ${{ steps.runtime.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch="runtime/kimi-${RUNTIME_VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin "$branch"; then
+            git fetch origin "$branch:refs/remotes/origin/$branch"
+          fi
+          git checkout -B "$branch"
+          git add runtime.lock.json
+          git commit -m "chore(runtime): sync Kimi Code ${RUNTIME_VERSION}"
+          git push --force-with-lease origin "$branch"
+          existing="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url // empty')"
+          if [ -z "$existing" ]; then
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "chore(runtime): 同步 Kimi Code ${RUNTIME_VERSION}" \
+              --body "自动更新官方 Runtime 锁文件。合并前需等待 CI，并按 RUNTIME.md 完成协议差异与真实账号回归。"
+          else
+            echo "已更新 $existing"
+          fi
+          gh workflow run ci.yml --ref "$branch"
