@@ -1,4 +1,4 @@
-# Farside（月背）
+<h1><img src="resources/icon.svg" width="42" alt="Farside 图标" align="absmiddle"> Farside（月背）</h1>
 
 面向 [Kimi Code](https://github.com/MoonshotAI/kimi-code) 的桌面 Agent 客户端，基于 Electron、React 与 TypeScript 构建。
 
