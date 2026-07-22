@@ -38,6 +38,7 @@ function releaseHighlights(notes: string | undefined, english: boolean): string[
       .replace(/^#{1,6}\s*/, '')
       .replace(/^[-*+]\s+/, '')
       .replace(/^\d+[.)]\s+/, '')
+      .replace(/^(?:feat|fix|perf|refactor|docs|chore|test|build|ci|style)(?:\([^)]*\))?!?:\s*/i, '')
       .trim())
     .filter(Boolean)
     .filter((line) => !/^(what'?s changed|更新内容|full changelog|new contributors)$/i.test(line))
@@ -58,6 +59,9 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
   const english = locale === 'en-US'
   const [update, setUpdate] = useState<AppUpdateInfo | null>(null)
   const [opening, setOpening] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [downloaded, setDownloaded] = useState(false)
+  const [progress, setProgress] = useState<{ received: number; total: number } | null>(null)
   const [openError, setOpenError] = useState<string | null>(null)
   const dismissedVersion = useRef<string | null>(null)
   const primaryButton = useRef<HTMLButtonElement | null>(null)
@@ -83,6 +87,11 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
       window.clearInterval(interval)
     }
   }, [check, enabled, shot])
+
+  useEffect(() => {
+    if (shot === 'update') return
+    return window.api?.update.onProgress((received, total) => setProgress({ received, total }))
+  }, [shot])
 
   useEffect(() => {
     if (!update) return
@@ -124,6 +133,35 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
     else setOpenError(result?.error ?? (english ? 'Unable to open the update.' : '无法打开更新地址。'))
     setOpening(false)
   }
+  // 一键更新：有匹配安装包时应用内直接下载并自动打开；没有则退回浏览器。
+  const runUpdate = async () => {
+    if (shot === 'update') return
+    if (!update?.assetName) {
+      await openUpdate()
+      return
+    }
+    setDownloading(true)
+    setProgress(null)
+    setOpenError(null)
+    const result = await window.api?.update.download().catch(() => ({ ok: false, error: undefined }))
+    setDownloading(false)
+    if (result?.ok) setDownloaded(true)
+    else setOpenError(result?.error ?? (english ? 'Download failed. Try the browser instead.' : '下载失败，可改用浏览器下载。'))
+  }
+  const progressPct = downloading && progress && progress.total > 0
+    ? Math.min(100, Math.round((progress.received / progress.total) * 100))
+    : null
+  const primaryLabel = downloading
+    ? progressPct !== null
+      ? (english ? `Downloading… ${progressPct}%` : `正在下载… ${progressPct}%`)
+      : (english ? 'Downloading…' : '正在下载…')
+    : downloaded
+      ? (english ? 'Installer opened ✓' : '安装包已打开 ✓')
+      : update?.assetName
+        ? (english ? 'Update now' : '一键更新')
+        : opening
+          ? (english ? 'Opening…' : '正在打开…')
+          : (english ? 'Download update ↗' : '下载更新 ↗')
 
   return (
     <div className="update-prompt__backdrop fade-in">
@@ -171,7 +209,34 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
             </ul>
           </div>
 
-          {openError ? <p className="update-prompt__error mono">{openError}</p> : null}
+          {openError ? (
+            <p className="update-prompt__error mono">
+              {openError}{' '}
+              {update.assetName ? (
+                <button type="button" className="update-prompt__fallback" onClick={() => void openUpdate()}>
+                  {english ? 'Try the browser ↗' : '改用浏览器下载 ↗'}
+                </button>
+              ) : null}
+            </p>
+          ) : null}
+          {downloaded ? (
+            <p className="update-prompt__done">
+              {english
+                ? 'The installer has been opened — follow its steps to finish the update.'
+                : '安装包已自动打开，按提示完成安装即可。'}
+            </p>
+          ) : null}
+          {downloading ? (
+            <div
+              className="update-prompt__progress"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progressPct ?? undefined}
+            >
+              <span style={progressPct !== null ? { width: `${progressPct}%` } : undefined} />
+            </div>
+          ) : null}
           <footer className="update-prompt__footer">
             <span className="mono update-prompt__asset">
               {update.assetName
@@ -185,10 +250,10 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
               ref={primaryButton}
               type="button"
               className="update-prompt__download"
-              onClick={() => void openUpdate()}
-              disabled={opening}
+              onClick={() => void runUpdate()}
+              disabled={downloading || opening || downloaded}
             >
-              {opening ? (english ? 'Opening…' : '正在打开…') : (english ? 'Download update ↗' : '下载更新 ↗')}
+              {primaryLabel}
             </button>
           </footer>
         </div>

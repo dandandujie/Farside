@@ -1,9 +1,13 @@
-import { net, shell } from 'electron'
+import { promises as fs } from 'node:fs'
+import { join } from 'node:path'
+import { app, net, shell } from 'electron'
 import type { AppUpdateInfo } from '@shared/ipc'
 
 const RELEASE_API = 'https://api.github.com/repos/dandandujie/Farside/releases/latest'
 const RELEASE_ROOT = 'https://github.com/dandandujie/Farside/releases/'
 const REQUEST_TIMEOUT_MS = 8_000
+// 安装包远小于此值；上限只是防止异常响应撑爆磁盘。
+const MAX_UPDATE_BYTES = 1024 * 1024 * 1024
 
 interface GitHubAsset {
   name?: unknown
@@ -78,6 +82,7 @@ function selectAsset(assets: GitHubAsset[], platform: NodeJS.Platform, arch: str
 /** 仅负责官方 Farside GitHub Release；网络失败时静默降级为“无可用更新”。 */
 export class UpdateService {
   private lastOpenUrl: string | null = null
+  private lastAsset: { url: string; name: string } | null = null
 
   async check(currentVersion: string): Promise<AppUpdateInfo> {
     const fallback: AppUpdateInfo = { updateAvailable: false, currentVersion }
@@ -105,6 +110,9 @@ export class UpdateService {
       const asset = selectAsset(assets, process.platform, process.arch)
       const assetUrl = typeof asset?.browser_download_url === 'string' ? asset.browser_download_url : null
       this.lastOpenUrl = assetUrl ?? release.html_url
+      this.lastAsset = assetUrl && typeof asset?.name === 'string'
+        ? { url: assetUrl, name: asset.name }
+        : null
 
       return {
         updateAvailable: true,
@@ -129,6 +137,62 @@ export class UpdateService {
       return { ok: true }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : '无法打开更新地址' }
+    }
+  }
+
+  /**
+   * 应用内直接下载最近一次校验过的安装包并自动打开，不经过浏览器。
+   * 只接受 check() 校验过的 GitHub Release 资产地址，流式落盘，不整包读进内存。
+   */
+  async download(
+    onProgress?: (received: number, total: number) => void
+  ): Promise<{ ok: boolean; error?: string }> {
+    const asset = this.lastAsset
+    if (!asset || !isTrustedReleaseUrl(asset.url)) {
+      return { ok: false, error: '没有可下载的已校验安装包' }
+    }
+    try {
+      const response = await net.fetch(asset.url, {
+        headers: { 'User-Agent': `Farside/${app.getVersion()}` }
+      })
+      if (!response.ok || !response.body) {
+        return { ok: false, error: `安装包下载失败（HTTP ${response.status}）` }
+      }
+      const total = Number(response.headers.get('content-length')) || 0
+      if (total > MAX_UPDATE_BYTES) return { ok: false, error: '安装包体积异常，已取消下载' }
+
+      const safeName = asset.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/, '')
+      if (!safeName) return { ok: false, error: '安装包文件名无效' }
+      const dir = join(app.getPath('temp'), 'farside-update')
+      await fs.mkdir(dir, { recursive: true })
+      const filePath = join(dir, safeName)
+
+      const handle = await fs.open(filePath, 'w')
+      let received = 0
+      try {
+        const reader = response.body.getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (!value) continue
+          received += value.byteLength
+          if (received > MAX_UPDATE_BYTES) throw new Error('安装包体积异常，已取消下载')
+          await handle.write(value)
+          onProgress?.(received, total)
+        }
+      } finally {
+        await handle.close()
+      }
+      if (total > 0 && received !== total) {
+        await fs.rm(filePath, { force: true })
+        return { ok: false, error: '安装包下载不完整，请重试' }
+      }
+
+      const openError = await shell.openPath(filePath)
+      if (openError) return { ok: false, error: `安装包已下载但无法打开：${openError}` }
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '安装包下载失败' }
     }
   }
 }

@@ -69,14 +69,38 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
       - name: Download installers
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: release-assets
           merge-multiple: true
 
+      # 用上一 tag 到当前 tag 的提交生成更新说明；app 的更新弹窗直接展示这份列表。
+      - name: Generate release notes
+        run: |
+          set -e
+          prev=$(git tag --sort=-version:refname | grep -vx '${{ github.ref_name }}' | head -n1 || true)
+          range="${prev:+$prev..}HEAD"
+          {
+            echo '## 更新内容'
+            echo
+            git log --no-merges --pretty=format:'- %s' "$range" \
+              | grep -vE '^- chore\(release\):' \
+              | sed -E 's/^- (feat|fix|perf|refactor|docs|style|test|build|ci|chore)(\([^)]*\))?!?: /- /I' || true
+            echo
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$prev...${{ github.ref_name }}"
+            fi
+          } > release-notes.md
+
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release-assets/*
-          generate_release_notes: true
+          body_path: release-notes.md

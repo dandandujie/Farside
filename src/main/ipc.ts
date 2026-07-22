@@ -91,6 +91,11 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(IPC.AppCheckUpdate, () => updateService.check(app.getVersion()))
   ipcMain.handle(IPC.AppOpenUpdate, () => updateService.open())
+  ipcMain.handle(IPC.AppDownloadUpdate, (event) =>
+    updateService.download((received, total) => {
+      if (!event.sender.isDestroyed()) event.sender.send(IPC.AppUpdateProgress, received, total)
+    })
+  )
 
   ipcMain.handle(IPC.WindowMinimize, (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
@@ -142,6 +147,7 @@ export function registerIpcHandlers(): void {
     kimiClient.forkSession(sessionId)
   )
   ipcMain.handle(IPC.AgentSessionAction, (_event, input) => kimiClient.runSessionAction(input))
+  ipcMain.handle(IPC.AgentSessionProfile, (_event, input) => kimiClient.updateSessionProfile(input))
   ipcMain.handle(IPC.AgentSessionArchive, (_event, sessionId: string) =>
     kimiClient.archiveSession(sessionId)
   )

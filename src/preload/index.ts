@@ -11,7 +11,16 @@ const api: FarsideApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.AppGetInfo),
   update: {
     check: () => ipcRenderer.invoke(IPC.AppCheckUpdate),
-    open: () => ipcRenderer.invoke(IPC.AppOpenUpdate)
+    open: () => ipcRenderer.invoke(IPC.AppOpenUpdate),
+    download: () => ipcRenderer.invoke(IPC.AppDownloadUpdate),
+    onProgress: (cb) => {
+      const listener = (_event: IpcRendererEvent, received: number, total: number): void =>
+        cb(received, total)
+      ipcRenderer.on(IPC.AppUpdateProgress, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC.AppUpdateProgress, listener)
+      }
+    }
   },
   detectCli: () => ipcRenderer.invoke(IPC.CliDetect),
   window: {
@@ -77,6 +86,7 @@ const api: FarsideApi = {
     exportSession: (sessionId) => ipcRenderer.invoke(IPC.AgentSessionExport, sessionId),
     archiveSession: (sessionId) => ipcRenderer.invoke(IPC.AgentSessionArchive, sessionId),
     runSessionAction: (input) => ipcRenderer.invoke(IPC.AgentSessionAction, input),
+    updateSessionProfile: (input) => ipcRenderer.invoke(IPC.AgentSessionProfile, input),
     submitPrompt: (input) => ipcRenderer.invoke(IPC.AgentPromptSubmit, input),
     resolveApproval: (input) => ipcRenderer.invoke(IPC.AgentApprovalResolve, input),
     controlGoal: (input) => ipcRenderer.invoke(IPC.AgentGoalControl, input),

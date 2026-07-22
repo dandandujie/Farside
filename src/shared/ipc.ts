@@ -24,6 +24,8 @@ export const IPC = {
   AppGetInfo: 'app:get-info',
   AppCheckUpdate: 'app:check-update',
   AppOpenUpdate: 'app:open-update',
+  AppDownloadUpdate: 'app:download-update',
+  AppUpdateProgress: 'app:update-progress',
   WindowMinimize: 'window:minimize',
   WindowToggleMaximize: 'window:toggle-maximize',
   WindowClose: 'window:close',
@@ -48,6 +50,7 @@ export const IPC = {
   AgentSessionExport: 'agent:session-export',
   AgentSessionArchive: 'agent:session-archive',
   AgentSessionAction: 'agent:session-action',
+  AgentSessionProfile: 'agent:session-profile',
   AgentPromptSubmit: 'agent:prompt-submit',
   AgentApprovalResolve: 'agent:approval-resolve',
   AgentGoalControl: 'agent:goal-control',
@@ -197,6 +200,15 @@ export interface AgentSessionActionInput {
   sessionId: string
   action: 'abort' | 'compact' | 'undo'
   instruction?: string
+}
+
+/** 会话进行中更新完整 agent_config；profile 接口是整体替换，必须带全量字段。 */
+export interface AgentSessionProfileInput {
+  sessionId: string
+  model: ModelId
+  permissionMode: PermissionMode
+  planMode: boolean
+  swarmMode: boolean
 }
 
 export interface AgentPromptInput {
@@ -404,6 +416,7 @@ export interface IpcInvokeMap {
   [IPC.AppGetInfo]: { args: []; result: AppInfo }
   [IPC.AppCheckUpdate]: { args: []; result: AppUpdateInfo }
   [IPC.AppOpenUpdate]: { args: []; result: AgentActionResult }
+  [IPC.AppDownloadUpdate]: { args: []; result: AgentActionResult }
   [IPC.WindowMinimize]: { args: []; result: void }
   [IPC.WindowToggleMaximize]: { args: []; result: boolean }
   [IPC.WindowClose]: { args: []; result: void }
@@ -426,6 +439,7 @@ export interface IpcInvokeMap {
   [IPC.AgentSessionExport]: { args: [sessionId: string]; result: AgentActionResult }
   [IPC.AgentSessionArchive]: { args: [sessionId: string]; result: AgentActionResult }
   [IPC.AgentSessionAction]: { args: [input: AgentSessionActionInput]; result: AgentActionResult }
+  [IPC.AgentSessionProfile]: { args: [input: AgentSessionProfileInput]; result: AgentActionResult }
   [IPC.AgentPromptSubmit]: { args: [input: AgentPromptInput]; result: AgentActionResult }
   [IPC.AgentApprovalResolve]: { args: [input: AgentApprovalInput]; result: AgentActionResult }
   [IPC.AgentGoalControl]: { args: [input: AgentGoalControlInput]; result: AgentActionResult }
@@ -470,6 +484,10 @@ export interface FarsideApi {
     check(): Promise<AppUpdateInfo>
     /** 打开主进程最近一次校验过的安装包或 Release 页面。 */
     open(): Promise<AgentActionResult>
+    /** 应用内直接下载最近一次校验过的安装包并自动打开。 */
+    download(): Promise<AgentActionResult>
+    /** 订阅下载进度（字节）；返回取消订阅函数。 */
+    onProgress(cb: (received: number, total: number) => void): () => void
   }
   detectCli(): Promise<CliStatus>
   window: {
@@ -525,6 +543,7 @@ export interface FarsideApi {
     exportSession(sessionId: string): Promise<AgentActionResult>
     archiveSession(sessionId: string): Promise<AgentActionResult>
     runSessionAction(input: AgentSessionActionInput): Promise<AgentActionResult>
+    updateSessionProfile(input: AgentSessionProfileInput): Promise<AgentActionResult>
     submitPrompt(input: AgentPromptInput): Promise<AgentActionResult>
     resolveApproval(input: AgentApprovalInput): Promise<AgentActionResult>
     controlGoal(input: AgentGoalControlInput): Promise<AgentActionResult>

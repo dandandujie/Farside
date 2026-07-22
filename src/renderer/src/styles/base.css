@@ -515,6 +515,50 @@ button {
   font-size: 10px;
 }
 
+.update-prompt__fallback {
+  margin-left: 6px;
+  color: var(--moonlight);
+  font-size: 10px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.update-prompt__done {
+  margin: 10px 0 0;
+  color: var(--signal);
+  font-size: 10.5px;
+}
+
+.update-prompt__progress {
+  height: 2px;
+  margin-top: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.update-prompt__progress > span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--moonlight);
+  transition: width 200ms var(--ease-farside);
+  animation: update-prompt-indeterminate 1.2s var(--ease-farside) infinite;
+}
+
+@keyframes update-prompt-indeterminate {
+  0%, 100% { opacity: 0.45 }
+  50% { opacity: 1 }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-prompt__progress > span {
+    animation: none;
+    transition: none;
+  }
+}
+
 .update-prompt__footer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
