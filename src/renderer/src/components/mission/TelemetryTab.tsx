@@ -98,20 +98,31 @@ export function TelemetryTab() {
       }
     : (MODELS.find((item) => item.id === model) ?? MODELS[0])
 
-  const telemetry = [...(active?.events ?? [])].reverse().find((e) => e.kind === 'telemetry') as
-    | TelemetryEvent
-    | undefined
+  // 逐字段取最新可用值：step 级遥测事件可能缺 rate / 估价等字段，
+  // 只用最后一条事件会导致读数随流式步骤时有时无。
+  const telemetryEvents = (active?.events ?? []).filter(
+    (event): event is TelemetryEvent => event.kind === 'telemetry'
+  )
+  const newestFirst = [...telemetryEvents].reverse()
+  const rate = newestFirst.find((event) => event.tokensPerSecond > 0)?.tokensPerSecond
+  const costEvent = newestFirst.find(
+    (event) => event.estimatedCostCny !== undefined || event.cost !== undefined
+  )
+  const cacheHitRate = newestFirst.find((event) => event.cacheHitRate !== undefined)?.cacheHitRate
+  const totals = newestFirst.find(
+    (event) => (event.inputTokens ?? 0) + (event.cachedInputTokens ?? 0) + (event.outputTokens ?? 0) > 0
+  )
   const used = active?.contextTokens ?? 0
   const quotaAvailable =
     quota.weekUsedPct > 0 || quota.fiveHourUsedPct > 0 || quota.extraBalanceCny !== null
-  const costValue = telemetry?.estimatedCostCny !== undefined
-    ? formatCny(telemetry.estimatedCostCny)
-    : telemetry?.cost !== undefined
-      ? `$${telemetry.cost.toFixed(4)}`
+  const costValue = costEvent?.estimatedCostCny !== undefined
+    ? formatCny(costEvent.estimatedCostCny)
+    : costEvent?.cost !== undefined
+      ? `$${costEvent.cost.toFixed(4)}`
       : '—'
-  const inputTokens = telemetry?.inputTokens ?? 0
-  const cachedInputTokens = telemetry?.cachedInputTokens ?? 0
-  const outputTokens = telemetry?.outputTokens ?? 0
+  const inputTokens = totals?.inputTokens ?? 0
+  const cachedInputTokens = totals?.cachedInputTokens ?? 0
+  const outputTokens = totals?.outputTokens ?? 0
   const tokenTotal = inputTokens + cachedInputTokens + outputTokens
 
   return (
@@ -124,7 +135,7 @@ export function TelemetryTab() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px 12px' }}>
         <TelemetryNum
           label={english ? 'Rate' : '速率'}
-          value={telemetry && telemetry.tokensPerSecond > 0 ? telemetry.tokensPerSecond.toFixed(1) : '—'}
+          value={rate !== undefined ? rate.toFixed(1) : '—'}
           unit="tok/s"
         />
         <TelemetryNum label={english ? 'Active time' : '处理耗时'} value={formatElapsed(active, english)} />
@@ -134,7 +145,7 @@ export function TelemetryTab() {
         />
         <TelemetryNum
           label={english ? 'Cache hit rate' : '缓存命中率'}
-          value={telemetry?.cacheHitRate !== undefined ? `${telemetry.cacheHitRate.toFixed(1)}%` : '—'}
+          value={cacheHitRate !== undefined ? `${cacheHitRate.toFixed(1)}%` : '—'}
         />
       </div>
 
@@ -146,9 +157,9 @@ export function TelemetryTab() {
           </span>
         </div>
         {[
-          [english ? 'Input · cache miss' : '输入 · 未命中', inputTokens, telemetry?.inputCostCny],
-          [english ? 'Input · cache hit' : '输入 · 缓存命中', cachedInputTokens, telemetry?.cachedInputCostCny],
-          [english ? 'Output' : '输出', outputTokens, telemetry?.outputCostCny]
+          [english ? 'Input · cache miss' : '输入 · 未命中', inputTokens, totals?.inputCostCny],
+          [english ? 'Input · cache hit' : '输入 · 缓存命中', cachedInputTokens, totals?.cachedInputCostCny],
+          [english ? 'Output' : '输出', outputTokens, totals?.outputCostCny]
         ].map(([label, tokens, cost]) => (
           <div key={String(label)} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 10, alignItems: 'baseline', padding: '7px 10px', borderBottom: '1px solid color-mix(in srgb, var(--line) 70%, transparent)' }}>
             <span style={{ fontSize: 11.5, color: 'var(--dust)' }}>{String(label)}</span>

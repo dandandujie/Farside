@@ -132,6 +132,7 @@ type NarrativeItem =
   | { kind: 'event'; event: TrajectoryEvent }
   | { kind: 'activity'; id: string; events: TrajectoryEvent[] }
   | { kind: 'thinking'; id: string; events: Extract<TrajectoryEvent, { kind: 'transmission' }>[] }
+  | { kind: 'telemetry'; id: string; event: Extract<TrajectoryEvent, { kind: 'telemetry' }> }
   | { kind: 'swarm'; id: string; events: Extract<TrajectoryEvent, { kind: 'satellite' }>[] }
 
 /** 正文消息是阅读边界；边界之间的所有工具统一收成一个活动组。 */
@@ -152,8 +153,11 @@ function groupNarrative(events: TrajectoryEvent[]): NarrativeItem[] {
       return !/^(agent|agent.?swarm)$/i.test(event.tool.replace(/[^a-z]/gi, ''))
     })
     const thinking = segment.filter((event): event is Extract<TrajectoryEvent, { kind: 'transmission' }> => event.kind === 'transmission')
+    // 每个 step 都会上发一条遥测，多段思考会堆出一整列；只保留最新一条原地更新。
+    const telemetryEvents = segment.filter((event): event is Extract<TrajectoryEvent, { kind: 'telemetry' }> => event.kind === 'telemetry')
     let activityInserted = false
     let thinkingInserted = false
+    let telemetryInserted = false
     const swarmsInserted = new Set<string>()
     for (const event of segment) {
       if (event.kind === 'instrument') {
@@ -165,6 +169,15 @@ function groupNarrative(events: TrajectoryEvent[]): NarrativeItem[] {
         if (!thinkingInserted) {
           items.push({ kind: 'thinking', id: `thinking-batch-${thinking[0].id}`, events: thinking })
           thinkingInserted = true
+        }
+      } else if (event.kind === 'telemetry') {
+        if (!telemetryInserted) {
+          items.push({
+            kind: 'telemetry',
+            id: `telemetry-batch-${telemetryEvents[0].id}`,
+            event: telemetryEvents[telemetryEvents.length - 1]
+          })
+          telemetryInserted = true
         }
       } else if (event.kind === 'satellite') {
         const key = event.parentToolCallId ?? 'unscoped'
@@ -231,9 +244,11 @@ function NarrativeEvents({ events, phase, lastId, live = false }: { events: Traj
             ? <ActivityBatch events={item.events} phase={phase} lastId={lastId} live={live} />
             : item.kind === 'thinking'
               ? <ThinkingBatch events={item.events} phase={phase} lastId={lastId} />
-              : item.kind === 'swarm'
-                ? <SatelliteGroup events={item.events} />
-                : renderNode(item.event, item.event.id === lastId, phase)}
+              : item.kind === 'telemetry'
+                ? renderNode(item.event, item.event.id === lastId, phase)
+                : item.kind === 'swarm'
+                  ? <SatelliteGroup events={item.events} />
+                  : renderNode(item.event, item.event.id === lastId, phase)}
         </div>
       ))}
     </>

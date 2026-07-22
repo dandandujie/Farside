@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GitChange } from '@shared/ipc'
 import { SectionLabel } from '../../design-system/SectionLabel'
 import { useActiveSession } from '../../lib/store'
@@ -73,6 +73,10 @@ export function DiffTab() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<number | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
+  // 首次读取完成前展示加载态，而不是误报“工作区没有改动”。
+  const [changesLoading, setChangesLoading] = useState(true)
+  // effect 因 toolRevision 频繁重建，用 ref 跨重建去重，避免 git_status 请求堆积。
+  const refreshingRef = useRef(false)
   const toolRevision = active?.events
     .filter((event) => event.kind === 'instrument')
     .map((event) => `${event.id}:${event.status}`)
@@ -83,16 +87,16 @@ export function DiffTab() {
     setSelectedPath(null)
     setBranch(null)
     setLastUpdated(null)
+    setChangesLoading(true)
   }, [active?.id])
 
   useEffect(() => {
     const agent = window.api?.agent
     if (!active || !agent) return
     let alive = true
-    let refreshing = false
     const refresh = async () => {
-      if (refreshing) return
-      refreshing = true
+      if (refreshingRef.current) return
+      refreshingRef.current = true
       try {
         const result = await agent.getGitChanges(active.id)
         if (!alive) return
@@ -115,7 +119,8 @@ export function DiffTab() {
       } catch (reason) {
         if (alive) setError(reason instanceof Error ? reason.message : 'Git 改动读取失败')
       } finally {
-        refreshing = false
+        refreshingRef.current = false
+        if (alive) setChangesLoading(false)
       }
     }
     void refresh()
@@ -232,7 +237,10 @@ export function DiffTab() {
               {error}
             </p>
           ) : null}
-          {!error && changes.length === 0 ? (
+          {!error && changesLoading && changes.length === 0 ? (
+            <p style={{ margin: '6px 8px', fontSize: 11, color: 'var(--faint)' }}>{english ? 'Reading workspace changes…' : '正在读取工作区改动…'}</p>
+          ) : null}
+          {!error && !changesLoading && changes.length === 0 ? (
             <p style={{ margin: '6px 8px', fontSize: 11, color: 'var(--faint)' }}>{english ? 'No workspace changes.' : '工作区没有改动。'}</p>
           ) : null}
         </div>
@@ -248,7 +256,8 @@ export function DiffTab() {
           }}
         >
           <div style={{ minWidth: 'max-content' }}>
-            {diffLoading ? (
+            {/* diff 尚未取回（含 effect 竞态窗口）时也显示加载提示，不留空白 */}
+            {selected && (diffLoading || selected.diff === undefined) ? (
               <p style={{ margin: 0, padding: '8px 12px', fontSize: 11, color: 'var(--faint)' }}>
                 {english ? 'Loading this file diff…' : '正在读取当前文件改动…'}
               </p>

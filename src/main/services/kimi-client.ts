@@ -64,6 +64,8 @@ const REQUEST_TIMEOUT_MS = 30_000
 const EXPORT_TIMEOUT_MS = 120_000
 const MAX_EXPORT_BYTES = 256 * 1024 * 1024
 const MAX_WS_PAYLOAD_BYTES = 8 * 1024 * 1024
+// snapshot 只回最近一页消息；逐页补齐时的安全上限，避免异常会话拖垮加载。
+const MAX_HISTORY_PAGES = 100
 
 interface ApiEnvelope<T> {
   code: number
@@ -1076,6 +1078,44 @@ export class KimiClientService {
     }
   }
 
+  /** snapshot 只返回最近一页消息（has_more 标记还有更早的页），按 before_id 逐页补齐完整历史。 */
+  private async fullMessages(sessionId: string, messages: unknown): Promise<unknown> {
+    const items = isRecord(messages) && Array.isArray(messages.items)
+      ? messages.items.filter(isRecord)
+      : []
+    if (!isRecord(messages) || messages.has_more !== true || !items.length) return { items }
+    const idOf = (item: UnknownRecord): string | null =>
+      typeof item.id === 'string' && item.id ? item.id : null
+    const seen = new Set(items.map(idOf).filter((id): id is string => id !== null))
+    let cursor = idOf(items[0])
+    const older: UnknownRecord[] = []
+    for (let page = 0; page < MAX_HISTORY_PAGES && cursor; page++) {
+      const data = await this.request<{ items?: unknown; has_more?: boolean }>(
+        `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?before_id=${encodeURIComponent(cursor)}`
+      )
+      const pageItems = Array.isArray(data.items) ? data.items.filter(isRecord) : []
+      if (!pageItems.length) break
+      // messages 接口按时间倒序分页（最新在前），翻正后再按时间正序拼接，
+      // 保证 eventsFromMessages 里 tool_use → tool_result 的配对顺序。
+      const ascending = atOf(pageItems[0].created_at) <= atOf(pageItems[pageItems.length - 1].created_at)
+        ? pageItems
+        : [...pageItems].reverse()
+      const pageCursor = idOf(ascending[0])
+      const fresh: UnknownRecord[] = []
+      for (const item of ascending) {
+        const id = idOf(item)
+        if (id && seen.has(id)) continue
+        if (id) seen.add(id)
+        fresh.push(item)
+      }
+      older.unshift(...fresh)
+      // 游标不再前移说明服务端忽略了 before_id，停止避免空转。
+      if (data.has_more !== true || !pageCursor || pageCursor === cursor) break
+      cursor = pageCursor
+    }
+    return { items: [...older, ...items] }
+  }
+
   async loadSession(sessionId: string): Promise<AgentSessionResult> {
     try {
       const [snapshot, goal, persistedTelemetry] = await Promise.all([
@@ -1088,7 +1128,7 @@ export class KimiClientService {
         this.getGoal(sessionId),
         this.readPersistedTelemetry(sessionId)
       ])
-      const events = eventsFromMessages(snapshot.messages)
+      const events = eventsFromMessages(await this.fullMessages(sessionId, snapshot.messages))
       if (persistedTelemetry) {
         events.push({
           id: `telemetry-history-${sessionId}`,

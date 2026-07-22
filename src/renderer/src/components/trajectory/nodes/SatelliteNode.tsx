@@ -88,13 +88,6 @@ function SatelliteMember({ event, index, now }: { event: SatelliteEvent; index: 
   const { locale } = usePreferences()
   const english = locale === 'en-US'
   const duration = elapsedMs(event, now)
-  const activity = event.result || event.latestActivity || (
-    event.status === 'launching'
-      ? (english ? 'Waiting for launch…' : '等待入轨…')
-      : event.status === 'in-orbit'
-        ? (english ? 'Still working…' : '持续工作中…')
-        : ''
-  )
   const metrics = [
     `${event.toolCount ?? 0} ${english ? 'tools' : '工具'}`,
     duration > 0 ? formatDuration(duration) : null,
@@ -114,15 +107,14 @@ function SatelliteMember({ event, index, now }: { event: SatelliteEvent; index: 
       <div className={`swarm-member__signal mono${TERMINAL.has(event.status) ? '' : ' swarm-member__signal--active'}`} style={{ color: statusColor(event.status) }}>
         {brailleSignal(event, now)}
       </div>
-      <div className="swarm-member__task">{event.task}</div>
+      <div className="swarm-member__task" title={event.task}>{event.task}</div>
       <div className="swarm-member__metrics mono">{metrics.join(' · ')}</div>
-      {activity ? <div className="swarm-member__activity selectable">{activity}</div> : null}
     </article>
   )
 }
 
 /**
- * Kimi TUI AgentSwarm 的桌面映射：整体总览 + 响应式成员网格 + 活动信号条。
+ * Kimi TUI AgentSwarm 的桌面映射：整体总览 + 横向滚动的窄成员卡片 + 活动信号条。
  * 运行时保持展开，全部结束后自动收起；用户仍可手动查看每颗卫星的任务与结果。
  */
 export function SatelliteGroup({ events }: { events: SatelliteEvent[] }) {

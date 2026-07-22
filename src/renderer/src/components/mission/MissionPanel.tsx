@@ -36,14 +36,11 @@ export function MissionPanel() {
       }}
     >
       <ResizeHandle edge="left" onDrag={(delta) => setWidth(width - delta)} />
-      {/* tab 切换淡入 + 行 hover，全模块共用这一份样式 */}
+      {/* tab 行 hover，全模块共用这一份样式 */}
       <style>{`
-        @keyframes mission-tab-in { from { opacity: 0 } to { opacity: 1 } }
-        .mission-tab-in { animation: mission-tab-in 120ms var(--ease-farside) }
         .mission-row { transition: background 120ms var(--ease-farside) }
         .mission-row:hover { background: var(--crater) }
         @media (prefers-reduced-motion: reduce) {
-          .mission-tab-in { animation: none }
           .mission-row { transition: none }
         }
       `}</style>
@@ -83,11 +80,12 @@ export function MissionPanel() {
           )
         })}
       </div>
-      <div key={tab} className="mission-tab-in" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        {tab === 'diff' ? <DiffTab /> : null}
-        {tab === 'telemetry' ? <TelemetryTab /> : null}
-        {tab === 'files' ? <FilesTab /> : null}
-        {tab === 'preview' ? <PreviewTab /> : null}
+      {/* 所有 tab 保持挂载，切换只改可见性：状态与已取数据不丢，切回不重新加载 */}
+      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        <div style={{ display: tab === 'diff' ? 'contents' : 'none' }}><DiffTab /></div>
+        <div style={{ display: tab === 'telemetry' ? 'contents' : 'none' }}><TelemetryTab /></div>
+        <div style={{ display: tab === 'files' ? 'contents' : 'none' }}><FilesTab /></div>
+        <div style={{ display: tab === 'preview' ? 'contents' : 'none' }}><PreviewTab /></div>
       </div>
     </aside>
   )

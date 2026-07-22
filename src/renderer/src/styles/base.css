@@ -91,7 +91,7 @@ button {
   animation: caret-breathe 1.2s var(--ease-farside) infinite;
 }
 
-/* ── Agent Swarm：参考 Kimi TUI 的总览、编号网格与 Braille 活动条 ─ */
+/* ── Agent Swarm：参考 Kimi TUI 的总览、横向编号卡片与 Braille 活动条 ─ */
 .swarm-panel {
   position: relative;
   width: 100%;
@@ -171,18 +171,19 @@ button {
   transition: background-color 180ms var(--ease-farside), opacity 180ms var(--ease-farside);
 }
 
+/* 成员卡片收窄成固定宽度，横向排列，超出时横向滚动 */
 .swarm-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(218px, 1fr));
-  max-height: 286px;
-  overflow-y: auto;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: 9px 10px 10px;
   gap: 6px;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
 .swarm-member {
+  flex: 0 0 auto;
+  width: 204px;
   min-width: 0;
   padding: 8px 9px 7px;
   border: 1px solid var(--line);
@@ -264,25 +265,6 @@ button {
   letter-spacing: 0.015em;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.swarm-member__activity {
-  display: -webkit-box;
-  overflow: hidden;
-  margin-top: 5px;
-  padding-top: 5px;
-  border-top: 1px solid var(--line);
-  color: var(--faint);
-  font-size: 10px;
-  line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-@media (max-width: 920px) {
-  .swarm-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* ── 工作月相：真实月相保持不变，仅外层轨道旋转并产生轻微月光 ─── */
