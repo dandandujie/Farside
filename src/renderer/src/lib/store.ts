@@ -791,12 +791,38 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   model: 'kimi-k3',
   setModel: (model) => set((state) => composerPatch(state, { model })),
   permissionMode: 'manual',
-  setPermissionMode: (permissionMode) => set((state) => composerPatch(state, { permissionMode })),
-  cyclePermissionMode: () =>
-    set((state) => {
-      const order: PermissionMode[] = ['manual', 'auto', 'yolo']
-      return composerPatch(state, { permissionMode: order[(order.indexOf(state.permissionMode) + 1) % order.length] })
-    }),
+  setPermissionMode: (permissionMode) => {
+    set((state) => composerPatch(state, { permissionMode }))
+    const state = get()
+    const sessionId = state.activeSessionId
+    const api = window.api?.agent
+    if (!sessionId || !api || visualPreview) return
+    // 本地切换只是草稿态；必须同步到服务端才会对正在进行的会话生效。
+    void api
+      .updateSessionProfile({
+        sessionId,
+        model: state.model,
+        permissionMode,
+        planMode: state.planMode,
+        swarmMode: state.swarmMode
+      })
+      .then((result) => {
+        if (!result.ok) {
+          set({ lastError: result.error ?? '权限模式同步失败' })
+          return
+        }
+        // 切到自动/放开后，已经挂起的审批服务端不会自动放行，逐条批准以解挂当前轮。
+        if (permissionMode === 'manual') return
+        for (const approval of get().approvalQueue.filter((item) => item.sessionId === sessionId)) {
+          get().resolveApproval(approval.id, 'allow-once')
+        }
+      })
+  },
+  cyclePermissionMode: () => {
+    const order: PermissionMode[] = ['manual', 'auto', 'yolo']
+    const next = order[(order.indexOf(get().permissionMode) + 1) % order.length]
+    get().setPermissionMode(next)
+  },
   planMode: false,
   togglePlanMode: () => set((state) => composerPatch(state, { planMode: !state.planMode })),
   swarmMode: false,

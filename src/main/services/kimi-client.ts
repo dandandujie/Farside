@@ -17,6 +17,7 @@ import {
   type AgentQuestionInput,
   type AgentSessionCreateInput,
   type AgentSessionActionInput,
+  type AgentSessionProfileInput,
   type AgentSessionRenameInput,
   type AgentSessionResult,
   type AgentUpdate,
@@ -1022,14 +1023,14 @@ export class KimiClientService {
 
   private async listApprovals(sessionId: string): Promise<ApprovalRequest[]> {
     const data = await this.request<{ items: RemoteApproval[] }>(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/approvals`
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/approvals?status=pending`
     )
     return (data.items ?? []).map(approvalFromRemote)
   }
 
   private async listQuestions(sessionId: string): Promise<QuestionRequest[]> {
     const data = await this.request<{ items: RemoteQuestion[] }>(
-      `/api/v1/sessions/${encodeURIComponent(sessionId)}/questions`
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/questions?status=pending`
     )
     return (data.items ?? []).map(questionFromRemote)
   }
@@ -1306,6 +1307,39 @@ export class KimiClientService {
     }
   }
 
+  /**
+   * 会话进行中切换权限模式等配置。profile 接口实测是整体替换 agent_config，
+   * 缺字段会被清空（曾导致 model 被抹掉），所以这里强制带全量。
+   */
+  async updateSessionProfile(input: AgentSessionProfileInput): Promise<AgentActionResult> {
+    try {
+      if (
+        !input ||
+        !isBoundedString(input.sessionId, 512) ||
+        !isBoundedString(input.model, 512) ||
+        !['manual', 'auto', 'yolo'].includes(input.permissionMode) ||
+        typeof input.planMode !== 'boolean' ||
+        typeof input.swarmMode !== 'boolean'
+      ) {
+        throw new Error('会话配置参数无效')
+      }
+      await this.request(`/api/v1/sessions/${encodeURIComponent(input.sessionId)}/profile`, {
+        method: 'POST',
+        body: JSON.stringify({
+          agent_config: {
+            model: toKimiServerModel(input.model),
+            permission_mode: input.permissionMode,
+            plan_mode: input.planMode,
+            swarm_mode: input.swarmMode
+          }
+        })
+      })
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '会话配置更新失败' }
+    }
+  }
+
   async submitPrompt(input: AgentPromptInput): Promise<AgentActionResult> {
     try {
       if (!input || typeof input.sessionId !== 'string' || !input.sessionId) throw new Error('会话 ID 无效')
@@ -1410,6 +1444,16 @@ export class KimiClientService {
       })
       return { ok: true }
     } catch (error) {
+      // 审批已不在 pending（已超时或被别处处理）视为已解决，清掉卡片而不是报错。
+      const message = error instanceof Error ? error.message : ''
+      if (message.includes('expected "pending"')) {
+        this.emit({
+          kind: 'approval-resolved',
+          sessionId: input.sessionId,
+          approvalId: input.approvalId
+        })
+        return { ok: true }
+      }
       return { ok: false, error: error instanceof Error ? error.message : '审批应答失败' }
     }
   }
