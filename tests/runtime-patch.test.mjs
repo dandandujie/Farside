@@ -13,6 +13,7 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const lock = JSON.parse(await readFile(resolve(root, 'runtime.lock.json'), 'utf8'))
+const patchScript = await readFile(resolve(root, 'scripts', 'farside-runtime-patch.mjs'), 'utf8')
 const toolResultPatch = await readFile(
   resolve(root, 'patches', 'kimi-code', KIMI_UPSTREAM_VERSION, '0001-tool-result-token-budget.patch'),
   'utf8'
@@ -84,4 +85,5 @@ test('runtime 补丁参数要求显式模式与源码目录', () => {
   assert.deepEqual(parseArgs(['--check', '.']), { mode: '--check', sourceDir: root })
   assert.throws(() => parseArgs(['--apply']), /用法/)
   assert.throws(() => parseArgs(['--unknown', '.']), /用法/)
+  assert.match(patchScript, /'--ignore-space-change'/)
 })

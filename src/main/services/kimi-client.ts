@@ -26,6 +26,8 @@ import {
   type GitChangesResult,
   type McpListResult,
   type SkillListResult,
+  type TurnChangesResolveInput,
+  type TurnChangesResult,
   type WorkspaceCollectionResult,
   type WorkspaceEntry,
   type WorkspaceInfo,
@@ -33,6 +35,7 @@ import {
   type WorkspaceResult,
   type WorkspaceReadResult
 } from '@shared/ipc'
+import { TurnChangesService } from './turn-changes'
 import {
   isAllowedApiBaseUrl,
   MAX_ATTACHMENT_BYTES,
@@ -59,6 +62,7 @@ import {
 } from '@shared/types'
 import { readKimiServerToken, type ServerService } from './server'
 import { SUPPORTED_KIMI_WS_PROTOCOL_VERSION } from './runtime-manifest'
+import { resolveOAuthLoginState } from './oauth-login-state'
 import { sanitizeZipFileName } from '../security'
 
 const REQUEST_TIMEOUT_MS = 30_000
@@ -593,11 +597,33 @@ function eventsFromMessages(messages: unknown): TrajectoryEvent[] {
 }
 
 function approvalFromRemote(remote: RemoteApproval): ApprovalRequest {
+  const display = isRecord(remote.tool_input_display) ? remote.tool_input_display : null
+  const rawOptions = display && Array.isArray(display.options) ? display.options : []
+  const planReview =
+    display?.kind === 'plan_review' &&
+    typeof display.plan === 'string' &&
+    display.plan.trim()
+      ? {
+          plan: display.plan,
+          ...(typeof display.path === 'string' && display.path ? { path: display.path } : {}),
+          options: rawOptions
+            .filter(isRecord)
+            .filter((option) => typeof option.label === 'string' && option.label)
+            .slice(0, 3)
+            .map((option) => ({
+              label: String(option.label),
+              ...(typeof option.description === 'string' && option.description
+                ? { description: option.description }
+                : {})
+            }))
+        }
+      : undefined
   return {
     id: remote.approval_id,
     sessionId: remote.session_id,
     tool: remote.tool_name,
     detail: textOf(remote.tool_input_display || remote.action || remote.tool_name),
+    ...(planReview ? { planReview } : {}),
     requestedAt: atOf(remote.created_at)
   }
 }
@@ -624,6 +650,42 @@ function satelliteKind(name: unknown): 'coder' | 'explore' | 'plan' {
   if (value.includes('explore')) return 'explore'
   if (value.includes('plan')) return 'plan'
   return 'coder'
+}
+
+function editableToolPaths(payload: UnknownRecord): string[] {
+  const name = typeof payload.name === 'string' ? payload.name : ''
+  if (!/(?:edit|write|patch|create|delete|remove|move|rename)/i.test(name)) return []
+  const paths = new Set<string>()
+  const add = (value: string) => {
+    const cleaned = value.trim().replace(/^["'`]|["'`]$/g, '')
+    if (cleaned && cleaned.length <= 4_096 && !cleaned.includes('\0')) paths.add(cleaned)
+  }
+  const visit = (value: unknown, key = '') => {
+    if (typeof value === 'string') {
+      if (/(?:^|_)(?:path|file|filename|target)$/i.test(key) || /(?:path|filePath|file_path)$/i.test(key)) add(value)
+      for (const match of value.matchAll(/^\*{3} (?:Add|Update|Delete) File:\s*(.+)$/gm)) add(match[1])
+      for (const match of value.matchAll(/^(?:---|\+\+\+) [ab]\/(.+)$/gm)) add(match[1])
+      for (const match of value.matchAll(/\b(?:Edit|WriteFile|CreateFile|DeleteFile)\(([^,\n)]+)/g)) add(match[1])
+      if (/^\s*[{[]/.test(value)) {
+        try {
+          visit(JSON.parse(value))
+        } catch {
+          // 工具 display 不一定是 JSON，继续使用已识别的文本路径。
+        }
+      }
+      return
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    if (isRecord(value)) {
+      for (const [childKey, child] of Object.entries(value)) visit(child, childKey)
+    }
+  }
+  visit(payload.args)
+  visit(payload.display)
+  return [...paths]
 }
 
 function accountProviderKind(provider: RemoteProvider): AccountProviderInfo['kind'] {
@@ -679,14 +741,24 @@ export class KimiClientService {
   private sender: WebContents | null = null
   private subscriptions = new Set<string>()
   private reconnectTimer: NodeJS.Timeout | null = null
+  private streamFlushTimer: NodeJS.Timeout | null = null
+  private pendingStreamUpdates = new Map<string, Extract<AgentUpdate, { kind: 'event-upsert' }>>()
+  private approvalSyncs = new Map<string, Promise<void>>()
+  private questionSyncs = new Map<string, Promise<void>>()
   private disposed = false
   private thinking = new Map<string, { id: string; startedAt: number }>()
   private thinkingSequence = 0
   private activeToolCalls = new Map<string, Set<string>>()
   private subagents = new Map<string, Map<string, SubagentRuntime>>()
   private wirePaths = new Map<string, string>()
+  private readonly turnChanges = new TurnChangesService()
 
   constructor(private readonly server: ServerService) {}
+
+  private bindTurnChanges(session: Session): Session {
+    this.turnChanges.bindSession(session.id, session.cwd)
+    return session
+  }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const started = await this.server.start()
@@ -761,8 +833,63 @@ export class KimiClientService {
     })
   }
 
-  private emit(update: AgentUpdate): void {
+  private emitNow(update: AgentUpdate): void {
     if (this.sender && !this.sender.isDestroyed()) this.sender.send(IPC.AgentUpdate, update)
+  }
+
+  private flushStreamUpdates(): void {
+    if (this.streamFlushTimer) clearTimeout(this.streamFlushTimer)
+    this.streamFlushTimer = null
+    const updates = [...this.pendingStreamUpdates.values()]
+    this.pendingStreamUpdates.clear()
+    for (const update of updates) this.emitNow(update)
+  }
+
+  /**
+   * 文本 delta 以一帧为窗口合并，避免每个 token 都触发一次 IPC 与整条轨迹重渲染。
+   * 遇到工具、阶段或审批等离散事件时先 flush，保持事件先后顺序。
+   */
+  private emit(update: AgentUpdate): void {
+    if (
+      update.kind === 'event-upsert' &&
+      update.appendText === true &&
+      (update.event.kind === 'transmission' || update.event.kind === 'message')
+    ) {
+      const key = `${update.sessionId}:${update.event.id}`
+      const existing = this.pendingStreamUpdates.get(key)
+      if (
+        existing?.event.kind === 'transmission' &&
+        update.event.kind === 'transmission'
+      ) {
+        this.pendingStreamUpdates.set(key, {
+          ...update,
+          event: {
+            ...update.event,
+            at: existing.event.at,
+            text: existing.event.text + update.event.text,
+            durationMs: Math.max(existing.event.durationMs, update.event.durationMs)
+          }
+        })
+      } else if (
+        existing?.event.kind === 'message' &&
+        update.event.kind === 'message'
+      ) {
+        this.pendingStreamUpdates.set(key, {
+          ...update,
+          event: {
+            ...update.event,
+            at: existing.event.at,
+            markdown: existing.event.markdown + update.event.markdown
+          }
+        })
+      } else {
+        this.pendingStreamUpdates.set(key, update)
+      }
+      this.streamFlushTimer ??= setTimeout(() => this.flushStreamUpdates(), 32)
+      return
+    }
+    this.flushStreamUpdates()
+    this.emitNow(update)
   }
 
   private async fetchManagedUsage(): Promise<AccountUsage> {
@@ -1042,7 +1169,7 @@ export class KimiClientService {
         this.listRemoteSessions(),
         this.request<{ ready?: boolean }>('/api/v1/auth')
       ])
-      const sessions = remoteSessions.map((item) => sessionFromRemote(item))
+      const sessions = remoteSessions.map((item) => this.bindTurnChanges(sessionFromRemote(item)))
       const approvals = (
         await Promise.all(
           remoteSessions
@@ -1148,7 +1275,7 @@ export class KimiClientService {
           outputCostCny: persistedTelemetry.outputCostCny
         })
       }
-      const session = sessionFromRemote(snapshot.session, events)
+      const session = this.bindTurnChanges(sessionFromRemote(snapshot.session, events))
       if (persistedTelemetry) {
         session.contextTokens = persistedTelemetry.contextTokens
         session.activeDurationMs = persistedTelemetry.activeDurationMs
@@ -1191,7 +1318,7 @@ export class KimiClientService {
           }
         })
       })
-      const session = sessionFromRemote(remote)
+      const session = this.bindTurnChanges(sessionFromRemote(remote))
       this.subscribe(session.id)
       return { ok: true, session, approvals: [] }
     } catch (error) {
@@ -1211,7 +1338,7 @@ export class KimiClientService {
         `/api/v1/sessions/${encodeURIComponent(input.sessionId)}:rename`,
         { method: 'POST', body: JSON.stringify({ title: input.title }) }
       )
-      return { ok: true, session: sessionFromRemote(remote) }
+      return { ok: true, session: this.bindTurnChanges(sessionFromRemote(remote)) }
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : '会话重命名失败' }
     }
@@ -1223,7 +1350,7 @@ export class KimiClientService {
         `/api/v1/sessions/${encodeURIComponent(sessionId)}:fork`,
         { method: 'POST', body: JSON.stringify({}) }
       )
-      const session = sessionFromRemote(remote)
+      const session = this.bindTurnChanges(sessionFromRemote(remote))
       this.subscribe(session.id)
       return { ok: true, session }
     } catch (error) {
@@ -1272,7 +1399,9 @@ export class KimiClientService {
         !input ||
         !isBoundedString(input.sessionId, 512) ||
         !['abort', 'compact', 'undo'].includes(input.action) ||
-        (input.instruction !== undefined && !isBoundedString(input.instruction, MAX_PROMPT_CHARS, true))
+        (input.instruction !== undefined && !isBoundedString(input.instruction, MAX_PROMPT_CHARS, true)) ||
+        (input.count !== undefined &&
+          (!Number.isSafeInteger(input.count) || input.count < 1 || input.count > 100))
       ) {
         throw new Error('会话动作参数无效')
       }
@@ -1280,7 +1409,7 @@ export class KimiClientService {
         input.action === 'compact' && input.instruction
           ? { instruction: input.instruction }
           : input.action === 'undo'
-            ? { count: 1 }
+            ? { count: input.count ?? 1 }
             : {}
       await this.request(
         `/api/v1/sessions/${encodeURIComponent(input.sessionId)}:${input.action}`,
@@ -1421,7 +1550,8 @@ export class KimiClientService {
         !isBoundedString(input.sessionId, 512) ||
         !isBoundedString(input.approvalId, 512) ||
         !['allow-once', 'allow-always', 'deny'].includes(input.decision) ||
-        (input.feedback !== undefined && !isBoundedString(input.feedback, 4_000, true))
+        (input.feedback !== undefined && !isBoundedString(input.feedback, 4_000, true)) ||
+        (input.selectedLabel !== undefined && !isBoundedString(input.selectedLabel, 512))
       ) {
         throw new Error('审批参数无效')
       }
@@ -1433,7 +1563,8 @@ export class KimiClientService {
           body: JSON.stringify({
             decision,
             ...(input.decision === 'allow-always' ? { scope: 'session' } : {}),
-            ...(input.feedback ? { feedback: input.feedback } : {})
+            ...(input.feedback ? { feedback: input.feedback } : {}),
+            ...(input.selectedLabel ? { selected_label: input.selectedLabel } : {})
           })
         }
       )
@@ -1713,6 +1844,45 @@ export class KimiClientService {
     }
   }
 
+  async getTurnChanges(sessionId: string): Promise<TurnChangesResult> {
+    try {
+      if (!isBoundedString(sessionId, 512)) throw new Error('会话 ID 无效')
+      return await this.turnChanges.get(sessionId)
+    } catch (error) {
+      return {
+        ok: false,
+        changes: [],
+        tracked: false,
+        undoAvailable: false,
+        error: error instanceof Error ? error.message : '本轮改动读取失败'
+      }
+    }
+  }
+
+  async resolveTurnChanges(input: TurnChangesResolveInput): Promise<TurnChangesResult> {
+    try {
+      if (
+        !input ||
+        !isBoundedString(input.sessionId, 512) ||
+        !['undo', 'keep'].includes(input.action) ||
+        (input.path !== undefined && !isBoundedString(input.path, 4_096)) ||
+        (input.count !== undefined &&
+          (!Number.isSafeInteger(input.count) || input.count < 1 || input.count > 100))
+      ) {
+        throw new Error('本轮改动操作无效')
+      }
+      return await this.turnChanges.resolve(input.sessionId, input.action, input.path, input.count)
+    } catch (error) {
+      return {
+        ok: false,
+        changes: [],
+        tracked: false,
+        undoAvailable: false,
+        error: error instanceof Error ? error.message : '本轮改动操作失败'
+      }
+    }
+  }
+
   /** 使用 Kimi Server v2 的官方 PluginService，避免绕过插件校验与 managed 安装事务。 */
   async managePlugin(
     input: Extract<ConfigurationManageInput, { kind: 'plugin' }>
@@ -1824,18 +1994,24 @@ export class KimiClientService {
 
   async startLogin(): Promise<AuthFlowResult> {
     try {
+      const auth = await this.request<{ ready?: boolean }>('/api/v1/auth')
+      if (auth.ready === true) {
+        await this.activateManagedProvider()
+        return { ok: true, ready: true, pending: false }
+      }
       const data = await this.request<{
         status?: string
         verification_uri?: string
         verification_uri_complete?: string
         user_code?: string
       }>('/api/v1/oauth/login', { method: 'POST', body: JSON.stringify({}) })
-      const ready = data.status === 'authenticated'
-      if (ready) await this.activateManagedProvider()
+      const state = resolveOAuthLoginState(data.status, false)
+      if (state.ready) await this.activateManagedProvider()
       return {
-        ok: true,
-        ready,
-        pending: !ready,
+        ok: !state.error,
+        ready: state.ready,
+        pending: state.pending,
+        error: state.error,
         verificationUri: data.verification_uri_complete || data.verification_uri,
         userCode: data.user_code
       }
@@ -1850,10 +2026,21 @@ export class KimiClientService {
 
   async pollLogin(): Promise<AuthFlowResult> {
     try {
-      const data = await this.request<{ status?: string } | null>('/api/v1/oauth/login')
-      const ready = data?.status === 'authenticated'
-      if (ready) await this.activateManagedProvider()
-      return { ok: true, ready, pending: !ready }
+      const [flowResult, authResult] = await Promise.allSettled([
+        this.request<{ status?: string } | null>('/api/v1/oauth/login'),
+        this.request<{ ready?: boolean }>('/api/v1/auth')
+      ])
+      const authReady = authResult.status === 'fulfilled' && authResult.value.ready === true
+      const flowStatus = flowResult.status === 'fulfilled' ? flowResult.value?.status : undefined
+      if (!authReady && flowResult.status === 'rejected') throw flowResult.reason
+      const state = resolveOAuthLoginState(flowStatus, authReady)
+      if (state.ready) await this.activateManagedProvider()
+      return {
+        ok: !state.error,
+        ready: state.ready,
+        pending: state.pending,
+        error: state.error
+      }
     } catch (error) {
       return {
         ok: false,
@@ -2184,6 +2371,9 @@ export class KimiClientService {
 
   private handleSessionEvent(sessionId: string, type: string, payload: UnknownRecord): void {
     const now = Date.now()
+    if (type === 'tool.call.started') {
+      this.turnChanges.capture(sessionId, editableToolPaths(payload))
+    }
     if (this.handleSubagentActivity(sessionId, type, payload, now)) return
     if (type === 'prompt.submitted') {
       this.activeToolCalls.delete(sessionId)
@@ -2208,6 +2398,7 @@ export class KimiClientService {
           text
         })
       } else {
+        this.turnChanges.begin(sessionId)
         this.upsertEvent(sessionId, {
           id: `user-${String(payload.userMessageId ?? payload.promptId ?? randomUUID())}`,
           kind: 'user',
@@ -2244,7 +2435,6 @@ export class KimiClientService {
         },
         true
       )
-      this.emit({ kind: 'session-patch', sessionId, patch: { phase: 'first-quarter' } })
       return
     }
     if (type === 'assistant.delta' && typeof payload.delta === 'string') {
@@ -2510,48 +2700,88 @@ export class KimiClientService {
   }
 
   private async syncApprovals(sessionId: string): Promise<void> {
-    try {
-      const approvals = await this.listApprovals(sessionId)
-      for (const approval of approvals) {
-        this.emit({ kind: 'approval-upsert', approval })
-        this.upsertEvent(sessionId, {
-          id: `approval-${approval.id}`,
-          kind: 'approval',
-          at: approval.requestedAt,
-          approvalId: approval.id,
-          tool: approval.tool,
-          detail: approval.detail,
-          diff: approval.diff
+    const inFlight = this.approvalSyncs.get(sessionId)
+    if (inFlight) return inFlight
+    const task = (async () => {
+      try {
+        for (const delay of [0, 80, 200, 500, 1_000, 2_000]) {
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+          let approvals = await this.listApprovals(sessionId)
+          if (!approvals.length) {
+            const snapshot = await this.request<{ pending_approvals?: RemoteApproval[] }>(
+              `/api/v1/sessions/${encodeURIComponent(sessionId)}/snapshot`
+            )
+            approvals = (snapshot.pending_approvals ?? []).map(approvalFromRemote)
+          }
+          if (!approvals.length) continue
+          for (const approval of approvals) {
+            this.emit({ kind: 'approval-upsert', approval })
+            this.upsertEvent(sessionId, {
+              id: `approval-${approval.id}`,
+              kind: 'approval',
+              at: approval.requestedAt,
+              approvalId: approval.id,
+              tool: approval.tool,
+              detail: approval.detail,
+              diff: approval.diff
+            })
+          }
+          return
+        }
+      } catch (error) {
+        this.emit({
+          kind: 'connection',
+          connected: true,
+          error: error instanceof Error ? error.message : '审批同步失败'
         })
       }
-    } catch (error) {
-      this.emit({
-        kind: 'connection',
-        connected: true,
-        error: error instanceof Error ? error.message : '审批同步失败'
-      })
-    }
+    })().finally(() => this.approvalSyncs.delete(sessionId))
+    this.approvalSyncs.set(sessionId, task)
+    return task
   }
 
   private async syncQuestions(sessionId: string): Promise<void> {
-    try {
-      const questions = await this.listQuestions(sessionId)
-      for (const question of questions) this.emit({ kind: 'question-upsert', question })
-    } catch (error) {
-      this.emit({
-        kind: 'connection',
-        connected: true,
-        error: error instanceof Error ? error.message : '问题同步失败'
-      })
-    }
+    const inFlight = this.questionSyncs.get(sessionId)
+    if (inFlight) return inFlight
+    const task = (async () => {
+      try {
+        for (const delay of [0, 80, 200, 500, 1_000, 2_000]) {
+          if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+          let questions = await this.listQuestions(sessionId)
+          if (!questions.length) {
+            const snapshot = await this.request<{ pending_questions?: RemoteQuestion[] }>(
+              `/api/v1/sessions/${encodeURIComponent(sessionId)}/snapshot`
+            )
+            questions = (snapshot.pending_questions ?? []).map(questionFromRemote)
+          }
+          if (!questions.length) continue
+          for (const question of questions) this.emit({ kind: 'question-upsert', question })
+          return
+        }
+      } catch (error) {
+        this.emit({
+          kind: 'connection',
+          connected: true,
+          error: error instanceof Error ? error.message : '问题同步失败'
+        })
+      }
+    })().finally(() => this.questionSyncs.delete(sessionId))
+    this.questionSyncs.set(sessionId, task)
+    return task
   }
 
   dispose(): void {
     this.disposed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
+    if (this.streamFlushTimer) clearTimeout(this.streamFlushTimer)
+    this.streamFlushTimer = null
+    this.pendingStreamUpdates.clear()
+    this.approvalSyncs.clear()
+    this.questionSyncs.clear()
     this.socket?.close()
     this.socket = null
     this.sender = null
+    this.turnChanges.clear()
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "farside",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "author": "Farside Contributors",
@@ -21,7 +21,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none .tmp/security-tests/tests/security.test.js .tmp/security-tests/tests/runtime-manifest.test.js .tmp/security-tests/tests/kimi-server-endpoint.test.js tests/runtime-lock.test.mjs tests/runtime-patch.test.mjs tests/runtime-upstream.test.mjs",
+    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none .tmp/security-tests/tests/security.test.js .tmp/security-tests/tests/runtime-manifest.test.js .tmp/security-tests/tests/kimi-server-endpoint.test.js .tmp/security-tests/tests/oauth-login-state.test.js .tmp/security-tests/tests/turn-changes.test.js tests/runtime-lock.test.mjs tests/runtime-patch.test.mjs tests/runtime-upstream.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "runtime:prepare": "node scripts/prepare-kimi-runtime.mjs",
     "runtime:smoke": "node scripts/smoke-kimi-runtime.mjs",

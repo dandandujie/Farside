@@ -29,6 +29,11 @@ function sessionStatus(phase: MoonPhaseValue, english: boolean): { label: string
   return { label: labels[phase][english ? 1 : 0], active: phase !== 'new' }
 }
 
+function projectRootLabel(root: string): string {
+  const parts = root.replaceAll('\\', '/').split('/').filter(Boolean)
+  return parts.slice(-2).join('/')
+}
+
 function Menu({ children }: { children: ReactNode }) {
   return (
     <div
@@ -103,7 +108,7 @@ function ProjectHeader({
   const togglePinProject = useFarsideStore((state) => state.togglePinProject)
   const toggleArchiveProject = useFarsideStore((state) => state.toggleArchiveProject)
   return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', minHeight: 31, padding: '4px 9px 4px 13px' }}>
+    <div className="project-header" data-archived={archived || undefined}>
       {renaming ? (
         <input
           autoFocus
@@ -114,11 +119,21 @@ function ProjectHeader({
             if (event.key === 'Enter') commitRename()
             if (event.key === 'Escape') renameProject(project.id, project.name)
           }}
-          style={{ flex: 1, minWidth: 0, padding: '3px 5px', border: '1px solid var(--line-hi)', borderRadius: 5, background: 'var(--crater)', color: 'var(--moonlight)', fontSize: 11.5 }}
+          style={{ flex: 1, minWidth: 0, padding: '3px 5px', border: '1px solid var(--line-hi)', borderRadius: 5, background: 'var(--crater)', color: 'var(--moonlight)', fontSize: 12.5 }}
         />
       ) : (
-        <span className="mono" title={project.root} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10.5, color: archived ? 'var(--ghost)' : 'var(--faint)', letterSpacing: '0.07em', textTransform: 'uppercase' }}>
-          {pinned ? '◆ ' : ''}{project.name} · {count}
+        <span title={project.root} style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="project-header__name">
+              {pinned ? '◆ ' : ''}{project.name}
+            </span>
+            <span className="project-header__count mono">
+              {count}
+            </span>
+          </span>
+          <span className="project-header__root mono">
+            {projectRootLabel(project.root)}
+          </span>
         </span>
       )}
       <button aria-label={`${project.name} 项目操作`} onClick={() => setMenuOpen(!menuOpen)} style={{ width: 24, height: 22, color: 'var(--faint)', fontSize: 15 }}>···</button>

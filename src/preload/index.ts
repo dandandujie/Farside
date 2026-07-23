@@ -99,6 +99,8 @@ const api: FarsideApi = {
       ipcRenderer.invoke(IPC.AgentWorkspaceRead, sessionId, path),
     getGitChanges: (sessionId) => ipcRenderer.invoke(IPC.AgentGitChanges, sessionId),
     getGitDiff: (sessionId, path) => ipcRenderer.invoke(IPC.AgentGitDiff, sessionId, path),
+    getTurnChanges: (sessionId) => ipcRenderer.invoke(IPC.AgentTurnChanges, sessionId),
+    resolveTurnChanges: (input) => ipcRenderer.invoke(IPC.AgentTurnChangesResolve, input),
     listMcpServers: () => ipcRenderer.invoke(IPC.AgentMcpList),
     listSkills: (sessionId) => ipcRenderer.invoke(IPC.AgentSkillList, sessionId),
     startLogin: () => ipcRenderer.invoke(IPC.AgentAuthStart),

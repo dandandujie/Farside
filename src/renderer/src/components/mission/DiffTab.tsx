@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { GitChange } from '@shared/ipc'
 import { SectionLabel } from '../../design-system/SectionLabel'
-import { useActiveSession } from '../../lib/store'
+import { useActiveSession, useFarsideStore } from '../../lib/store'
 import { usePreferences } from '../../lib/preferences'
 
 // ── unified diff 逐行解析 ─────────────────────────────────────────
@@ -67,6 +67,7 @@ export function DiffTab() {
   const { locale } = usePreferences()
   const english = locale === 'en-US'
   const active = useActiveSession()
+  const reviewFilePath = useFarsideStore((state) => state.reviewFilePath)
   const [changes, setChanges] = useState<GitChange[]>([])
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [branch, setBranch] = useState<string | null>(null)
@@ -130,6 +131,12 @@ export function DiffTab() {
       window.clearInterval(interval)
     }
   }, [active?.id, active?.phase, toolRevision])
+
+  useEffect(() => {
+    if (!reviewFilePath || !changes.some((change) => change.path === reviewFilePath)) return
+    setSelectedPath(reviewFilePath)
+    useFarsideStore.setState({ reviewFilePath: null })
+  }, [changes, reviewFilePath])
 
   useEffect(() => {
     const agent = window.api?.agent

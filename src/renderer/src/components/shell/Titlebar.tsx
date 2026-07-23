@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useFarsideStore, useActiveSession, type RailView } from '../../lib/store'
 import { CrescentLogo } from '../../design-system/CrescentLogo'
-import { MoonPhase } from '../../design-system/MoonPhase'
 import { usePreferences } from '../../lib/preferences'
 
 /** 标题栏右侧的视图名（sessions 为主视图，不标注）。 */
 const VIEW_LABELS: Record<Exclude<RailView, 'sessions'>, string> = {
-  terminal: '终端',
   goals: '目标',
   settings: '设置'
 }
@@ -53,9 +51,9 @@ function WindowButton({
   )
 }
 
-/** 无边框窗口标题栏：左字标 + 项目名，右月相 + ─□×。整栏可拖拽。 */
+/** 无边框窗口标题栏：左字标 + 项目名，右主题开关 + ─□×。整栏可拖拽。 */
 export function Titlebar() {
-  const { locale, t } = usePreferences()
+  const { locale, theme, setTheme, t } = usePreferences()
   const active = useActiveSession()
   const view = useFarsideStore((s) => s.view)
   const [isMac, setIsMac] = useState(false)
@@ -110,11 +108,38 @@ export function Titlebar() {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-        {active ? (
-          <div style={{ ...NO_DRAG, marginRight: 8, display: 'flex', alignItems: 'center' }}>
-            <MoonPhase phase={active.phase} size={15} title={locale === 'en-US' ? `Current status: ${active.phase}` : `当前状态：${active.phase}`} />
-          </div>
-        ) : null}
+        <button
+          type="button"
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          aria-label={locale === 'en-US' ? 'Toggle light and dark theme' : '切换明亮/暗黑模式'}
+          title={locale === 'en-US'
+            ? `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`
+            : `切换到${theme === 'dark' ? '明亮' : '暗黑'}模式`}
+          style={{
+            ...NO_DRAG,
+            width: 28,
+            height: 28,
+            marginRight: 7,
+            display: 'grid',
+            placeItems: 'center',
+            border: '1px solid var(--line)',
+            borderRadius: 999,
+            color: 'var(--dust)',
+            background: 'var(--regolith)',
+            transition: 'background 150ms var(--ease-farside), color 150ms var(--ease-farside), transform 150ms var(--ease-farside)'
+          }}
+        >
+          {theme === 'dark' ? (
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <circle cx="8" cy="8" r="3" stroke="currentColor" />
+              <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke="currentColor" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <path d="M12.8 10.5A5.5 5.5 0 0 1 5.5 3.2 5.5 5.5 0 1 0 12.8 10.5Z" stroke="currentColor" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
         <WindowButton label={t('最小化')} onClick={() => void window.api?.window.minimize()}>
           <svg width="10" height="10" viewBox="0 0 10 10">
             <line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1" />

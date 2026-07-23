@@ -38,7 +38,7 @@ const outDir = join(root, 'shots')
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
 app.commandLine.appendSwitch('no-sandbox')
 
-const ALL = ['main', 'palette', 'diff', 'files', 'goals', 'terminal', 'settings', 'settings-light', 'account', 'preview', 'image-input', 'turns', 'profile', 'project-menu', 'resize', 'update']
+const ALL = ['main', 'environment', 'palette', 'diff', 'files', 'goals', 'terminal', 'settings', 'settings-light', 'account', 'preview', 'plan-review', 'queue', 'image-input', 'turns', 'turn-changes', 'undo-selector', 'profile', 'project-menu', 'resize', 'update']
 const targets = process.argv.slice(2).filter((s) => ALL.includes(s))
 const shots = targets.length > 0 ? targets : ALL
 
@@ -87,6 +87,10 @@ void app.whenReady().then(async () => {
         await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="账户"]')?.click()`)
         await sleep(150)
       }
+      if (name === 'environment') {
+        await win.webContents.executeJavaScript(`document.querySelector('button[aria-label="环境摘要"]')?.click()`)
+        await sleep(250)
+      }
       if (name === 'project-menu') {
         await win.webContents.executeJavaScript(`document.querySelector('button[aria-label$="项目操作"]')?.click()`)
         await sleep(150)
@@ -107,7 +111,25 @@ void app.whenReady().then(async () => {
       await sleep(200)
       const domState = await win.webContents
         .executeJavaScript(
-          `JSON.stringify({splash: !!document.querySelector('div[style*="z-index: 100"]'), text: document.body.innerText.length})`
+          `JSON.stringify((() => {
+            const terminal = document.querySelector('.terminal-drawer')
+            const rect = terminal?.getBoundingClientRect()
+            const parentRect = terminal?.parentElement?.getBoundingClientRect()
+            return {
+              splash: !!document.querySelector('div[style*="z-index: 100"]'),
+              text: document.body.innerText.length,
+              terminal: rect && parentRect
+                ? {
+                    top: Math.round(rect.top),
+                    bottom: Math.round(rect.bottom),
+                    height: Math.round(rect.height),
+                    parentTop: Math.round(parentRect.top),
+                    parentBottom: Math.round(parentRect.bottom),
+                    parentHeight: Math.round(parentRect.height)
+                  }
+                : null
+            }
+          })())`
         )
         .catch(() => 'eval-failed')
       console.log(`[diag] ${name} dom=${domState}`)
@@ -141,6 +163,14 @@ void app.whenReady().then(async () => {
           header?.scrollIntoView({ block: 'center' })
         })()`)
         await sleep(220)
+        const swarmWheel = await win.webContents.executeJavaScript(`(() => {
+          const rail = document.querySelector('.swarm-grid')
+          if (!rail) return null
+          const before = rail.scrollLeft
+          rail.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 180 }))
+          return { before, after: rail.scrollLeft, max: rail.scrollWidth - rail.clientWidth }
+        })()`)
+        console.log(`[check] turns-swarm wheel=${JSON.stringify(swarmWheel)}`)
         const swarm = await win.webContents.capturePage()
         writeFileSync(join(outDir, 'turns-swarm.png'), swarm.toPNG())
         console.log(`[shot] turns-swarm -> ${join(outDir, 'turns-swarm.png')}`)

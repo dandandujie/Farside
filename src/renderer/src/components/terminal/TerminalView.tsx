@@ -38,6 +38,7 @@ export function TerminalView() {
   const { locale, theme } = usePreferences()
   const containerRef = useRef<HTMLDivElement>(null)
   const ptyIdRef = useRef<string | null>(null)
+  const terminalRef = useRef<Terminal | null>(null)
   const session = useActiveSession()
   const cwd = session?.cwd
   const [link, setLink] = useState<LinkState>('connecting')
@@ -69,6 +70,7 @@ export function TerminalView() {
       // 管道降级模式下输出换行只有 \n，交给 xterm 补 \r，避免阶梯状文本
       convertEol: true
     })
+    terminalRef.current = term
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(container)
@@ -127,9 +129,16 @@ export function TerminalView() {
       unsubscribe?.()
       if (ptyId) void api.pty.kill(ptyId)
       ptyIdRef.current = null
+      terminalRef.current = null
       term.dispose()
     }
-  }, [attempt, cwd, theme])
+  }, [attempt, cwd])
+
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = theme === 'light' ? XTERM_THEME_LIGHT : XTERM_THEME_DARK
+    }
+  }, [theme])
 
   useEffect(() => {
     if (link !== 'ready' || !pendingCommand || !ptyIdRef.current || !window.api) return
@@ -137,8 +146,8 @@ export function TerminalView() {
     consumeTerminalCommand(pendingCommand.id)
     const approved = window.confirm(
       locale === 'en-US'
-        ? `Run this model-provided command in the terminal?\n\n${pendingCommand.command}`
-        : `确认在终端执行这段由模型提供的命令？\n\n${pendingCommand.command}`
+        ? `Run this command in the terminal?\n\n${pendingCommand.command}`
+        : `确认在终端执行这段命令？\n\n${pendingCommand.command}`
     )
     if (approved) void window.api.pty.write(ptyIdRef.current, `${command}\r`)
   }, [consumeTerminalCommand, link, locale, pendingCommand])

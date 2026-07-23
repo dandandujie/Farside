@@ -234,6 +234,11 @@ export interface ApprovalRequest {
   detail: string
   /** unified diff（审批卡必须能完整展示，不做小窗） */
   diff?: string
+  planReview?: {
+    plan: string
+    path?: string
+    options: Array<{ label: string; description?: string }>
+  }
   requestedAt: number
 }
 

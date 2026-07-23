@@ -62,6 +62,7 @@ export function CommandPalette() {
   const setActiveSession = useFarsideStore((s) => s.setActiveSession)
   const newSession = useFarsideStore((s) => s.newSession)
   const setView = useFarsideStore((s) => s.setView)
+  const openTerminal = useFarsideStore((s) => s.openTerminal)
   const setDraft = useFarsideStore((s) => s.setDraft)
   const permissionMode = useFarsideStore((s) => s.permissionMode)
   const cyclePermissionMode = useFarsideStore((s) => s.cyclePermissionMode)
@@ -132,7 +133,7 @@ export function CommandPalette() {
         group: '动作',
         label: english ? 'Open terminal' : '打开终端',
         keywords: '打开终端 terminal',
-        run: () => setView('terminal')
+        run: openTerminal
       },
       {
         id: 'act-settings',

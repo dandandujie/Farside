@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useFarsideStore, useActiveSession } from './lib/store'
 import { Titlebar } from './components/shell/Titlebar'
 import { OrbitRail } from './components/shell/OrbitRail'
@@ -10,6 +10,7 @@ import { Composer } from './components/composer/Composer'
 import { MissionPanel } from './components/mission/MissionPanel'
 import { ApprovalCard } from './components/approval/ApprovalCard'
 import { QuestionCard } from './components/approval/QuestionCard'
+import { PlanReviewCard } from './components/approval/PlanReviewCard'
 import { CommandPalette } from './components/palette/CommandPalette'
 import { TerminalView } from './components/terminal/TerminalView'
 import { GoalsView } from './components/goals/GoalsView'
@@ -17,6 +18,7 @@ import { SettingsView } from './components/settings/SettingsView'
 import { NoiseOverlay } from './design-system/NoiseOverlay'
 import { Onboarding } from './components/shell/Onboarding'
 import { UpdatePrompt } from './components/shell/UpdatePrompt'
+import { UndoSelector } from './components/trajectory/UndoSelector'
 import { usePreferences } from './lib/preferences'
 
 export default function App() {
@@ -27,18 +29,36 @@ export default function App() {
   const view = useFarsideStore((s) => s.view)
   const sidebarOpen = useFarsideStore((s) => s.sidebarOpen)
   const missionOpen = useFarsideStore((s) => s.missionOpen)
-  const approvalQueue = useFarsideStore((s) => s.approvalQueue)
-  const questionQueue = useFarsideStore((s) => s.questionQueue)
+  const terminalOpen = useFarsideStore((s) => s.terminalOpen)
+  const terminalMounted = useFarsideStore((s) => s.terminalMounted)
+  const activeApproval = useFarsideStore((s) =>
+    s.approvalQueue.find((item) => item.sessionId === s.activeSessionId)
+  )
+  const activeQuestion = useFarsideStore((s) =>
+    s.questionQueue.find((item) => item.sessionId === s.activeSessionId)
+  )
   const lastError = useFarsideStore((s) => s.lastError)
   const authReady = useFarsideStore((s) => s.authReady)
   const sending = useFarsideStore((s) => s.sending)
   const active = useActiveSession()
+  const lastEscapeAt = useRef(0)
 
   const handleBooted = useCallback(() => setBooted(), [setBooted])
 
   useEffect(() => {
     void initialize()
   }, [initialize])
+
+  useEffect(() => {
+    const plan = activeApproval?.planReview
+    if (!plan) return
+    useFarsideStore.getState().openPreview({
+      title: plan.path?.split(/[\\/]/).pop() || (t('计划') === '计划' ? '执行计划' : 'Execution plan'),
+      path: plan.path,
+      kind: 'markdown',
+      content: plan.plan
+    })
+  }, [activeApproval?.id, activeApproval?.planReview, t])
 
   // dev-only 截图钩子：按场景初始化界面状态，默认行为不受影响。
   // 仅在 URL 带参时生效，默认行为不受影响（离屏走查脚本 scripts/screenshot.mjs 用）。
@@ -47,8 +67,13 @@ export default function App() {
     if (!shot) return
     const s = useFarsideStore.getState()
     if (shot === 'palette') s.setPaletteOpen(true)
-    else if (shot === 'diff' || shot === 'files') s.setMissionTab(shot)
-    else if (shot === 'goals' || shot === 'terminal') s.setView(shot)
+    else if (shot === 'diff' || shot === 'files') {
+      useFarsideStore.setState({ missionOpen: true, missionTab: shot })
+    }
+    else if (shot === 'goals') s.setView(shot)
+    else if (shot === 'terminal') {
+      useFarsideStore.setState({ view: 'sessions', terminalOpen: true, terminalMounted: true })
+    }
     else if (shot === 'settings' || shot === 'settings-light') s.setView('settings')
     else if (shot === 'account') {
       useFarsideStore.setState({
@@ -79,14 +104,75 @@ export default function App() {
         content:
           '# 轨道更新\n\n预览舱已经接入当前会话，支持 **Markdown**、HTML、SVG 与纯文本。\n\n- 无需离开工作区\n- HTML 脚本默认禁用\n- 可从文件页或代码块打开\n\n```html\n<section class="signal">Hello, Farside.</section>\n```'
       })
-    } else if (shot === 'turns') {
+    } else if (shot === 'plan-review') {
+      const current = s.sessions.find((session) => session.id === s.activeSessionId)
+      if (current) {
+        useFarsideStore.setState({
+          sessions: s.sessions.map((session) =>
+            session.id === current.id ? { ...session, phase: 'full' } : session
+          ),
+          approvalQueue: [{
+            id: 'shot-plan-review',
+            sessionId: current.id,
+            tool: 'ExitPlanMode',
+            detail: '提交执行计划',
+            requestedAt: Date.now(),
+            planReview: {
+              path: `${current.cwd}/.kimi/plans/farside-queue.md`,
+              plan: '# 请求队列与计划审阅\n\n## 目标\n\n让执行中的会话可以继续接收请求，同时保持计划模式的明确决策边界。\n\n## 实施步骤\n\n1. 保留 Kimi `plan_review` 的结构化协议。\n2. 将后续请求按 Session 排队，并在当前轮结束后自动发送。\n3. 为队列提供修改、取消与清空操作。\n4. 验证审批、预览和队列续发不会互相抢占。',
+              options: []
+            }
+          }]
+        })
+      }
+    } else if (shot === 'queue') {
+      const current = s.sessions.find((session) => session.id === s.activeSessionId)
+      if (current) {
+        useFarsideStore.setState({
+          sessions: s.sessions.map((session) =>
+            session.id === current.id ? { ...session, phase: 'gibbous' } : session
+          ),
+          sending: true,
+          approvalQueue: [],
+          questionQueue: [],
+          promptQueues: {
+            [current.id]: [
+              {
+                id: 'shot-queue-1',
+                sessionId: current.id,
+                text: '改完打包一下，并检查 Windows 安装包。',
+                fileRefs: [],
+                attachments: [],
+                model: current.model,
+                permissionMode: 'manual',
+                planMode: false,
+                swarmMode: false,
+                createdAt: Date.now()
+              },
+              {
+                id: 'shot-queue-2',
+                sessionId: current.id,
+                text: '最后把变更摘要补充到中文 README。',
+                fileRefs: ['README.md'],
+                attachments: [],
+                model: current.model,
+                permissionMode: 'manual',
+                planMode: false,
+                swarmMode: false,
+                createdAt: Date.now() + 1
+              }
+            ]
+          }
+        })
+      }
+    } else if (shot === 'turns' || shot === 'turn-changes' || shot === 'undo-selector') {
       const current = s.sessions.find((session) => session.id === s.activeSessionId)
       if (current) {
         const now = Date.now()
         const toolNames = ['Read', 'Read', 'Bash', 'Edit', 'Bash', 'FetchURL', 'Bash', 'Edit', 'Bash', 'Bash']
         const next = {
           ...current,
-          phase: 'first-quarter' as const,
+          phase: shot === 'turns' ? 'first-quarter' as const : 'new' as const,
           events: [
             ...current.events,
             {
@@ -148,7 +234,9 @@ export default function App() {
             ...([
               ['coder', '实现会话内的 Swarm 事件聚合与自动收纳', 1, 8, 18_620, 48_400],
               ['explore', '核对 Kimi Code 终端中的子代理树与状态语义', 2, 5, 12_940, 35_800],
-              ['plan', '检查窄窗口下成员网格与汇总状态的可读性', 3, 3, 8_270, 26_100]
+              ['plan', '检查窄窗口下成员网格与汇总状态的可读性', 3, 3, 8_270, 26_100],
+              ['coder', '验证滚轮映射为横向轨道移动', 4, 4, 9_480, 29_600],
+              ['explore', '核对轨道两端的滚动边界与提示', 5, 2, 6_130, 18_900]
             ] as const).map(([satelliteKind, task, swarmIndex, toolCount, tokens, durationMs]) => ({
               id: `shot-swarm-${swarmIndex}`,
               kind: 'satellite' as const,
@@ -173,7 +261,8 @@ export default function App() {
         useFarsideStore.setState({
           sessions: s.sessions.map((session) => (session.id === current.id ? next : session)),
           approvalQueue: [],
-          questionQueue: []
+          questionQueue: [],
+          undoSelectorOpen: shot === 'undo-selector'
         })
       }
     }
@@ -192,6 +281,27 @@ export default function App() {
         e.preventDefault()
         state.abortCurrent()
         return
+      }
+      if (
+        e.key === 'Escape' &&
+        !state.undoSelectorOpen &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement) &&
+        !(e.target instanceof HTMLElement && e.target.isContentEditable) &&
+        state.view === 'sessions' &&
+        state.activeSessionId &&
+        state.sessions.find((session) => session.id === state.activeSessionId)?.phase === 'new' &&
+        state.approvalQueue.length === 0 &&
+        state.questionQueue.length === 0
+      ) {
+        const now = performance.now()
+        if (now - lastEscapeAt.current <= 500) {
+          e.preventDefault()
+          lastEscapeAt.current = 0
+          state.setUndoSelectorOpen(true)
+          return
+        }
+        lastEscapeAt.current = now
       }
       const meta = e.metaKey || e.ctrlKey
       if (!meta) return
@@ -229,7 +339,6 @@ export default function App() {
         {sidebarOpen && view === 'sessions' ? <SessionList /> : null}
 
         <main style={{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0 }}>
-          {view === 'terminal' ? <TerminalView /> : null}
           {view === 'goals' ? <GoalsView /> : null}
           {view === 'settings' ? <SettingsView /> : null}
           {view === 'sessions' ? (
@@ -239,6 +348,8 @@ export default function App() {
                 display: 'flex',
                 flexDirection: 'column',
                 minWidth: 0,
+                minHeight: 0,
+                overflow: 'hidden',
                 background: 'var(--void)'
               }}
             >
@@ -261,9 +372,32 @@ export default function App() {
                       {t('链路警告')} · {lastError}
                     </div>
                   ) : null}
-                  {approvalQueue[0] ? <ApprovalCard request={approvalQueue[0]} /> : null}
-                  {questionQueue[0] ? <QuestionCard request={questionQueue[0]} /> : null}
+                  {activeApproval?.planReview
+                    ? <PlanReviewCard request={activeApproval} />
+                    : activeApproval
+                      ? <ApprovalCard request={activeApproval} />
+                      : null}
+                  {activeQuestion ? <QuestionCard request={activeQuestion} /> : null}
                   <Composer />
+                  {terminalMounted ? (
+                    <div
+                      className={terminalOpen ? 'terminal-drawer' : undefined}
+                      aria-hidden={!terminalOpen}
+                      style={{
+                        height: terminalOpen ? 'clamp(220px, 34vh, 360px)' : 0,
+                        flexShrink: 0,
+                        display: 'flex',
+                        minHeight: 0,
+                        overflow: 'hidden',
+                        visibility: terminalOpen ? 'visible' : 'hidden',
+                        pointerEvents: terminalOpen ? 'auto' : 'none',
+                        borderTop: terminalOpen ? '1px solid var(--line-hi)' : 0,
+                        boxShadow: terminalOpen ? '0 -14px 36px rgba(0, 0, 0, .2)' : 'none'
+                      }}
+                    >
+                      <TerminalView />
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <EmptyState />
@@ -275,6 +409,7 @@ export default function App() {
       </div>
 
       <CommandPalette />
+      <UndoSelector />
       <NoiseOverlay />
       <Onboarding />
       <UpdatePrompt enabled={booted && authReady !== false && !sending} />

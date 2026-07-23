@@ -11,9 +11,13 @@
     "src/main/security.ts",
     "src/main/services/runtime-manifest.ts",
     "src/main/services/kimi-server-endpoint.ts",
+    "src/main/services/oauth-login-state.ts",
+    "src/main/services/turn-changes.ts",
     "src/shared/security.ts",
     "tests/security.test.ts",
     "tests/runtime-manifest.test.ts",
-    "tests/kimi-server-endpoint.test.ts"
+    "tests/kimi-server-endpoint.test.ts",
+    "tests/oauth-login-state.test.ts",
+    "tests/turn-changes.test.ts"
   ]
 }

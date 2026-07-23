@@ -13,6 +13,7 @@ import { SystemNode } from './nodes/SystemNode'
 import { usePreferences } from '../../lib/preferences'
 import { MoonPhase as MoonPhaseIcon } from '../../design-system/MoonPhase'
 import { Chevron } from './nodes/markers'
+import { TurnChangesCard } from './TurnChangesCard'
 
 function renderNode(event: TrajectoryEvent, isLast: boolean, phase: MoonPhase) {
   switch (event.kind) {
@@ -204,19 +205,27 @@ function groupNarrative(events: TrajectoryEvent[]): NarrativeItem[] {
   return items
 }
 
-function WorkingIndicator({ phase }: { phase: MoonPhase }) {
+function WorkingIndicator({ phase, startedAt }: { phase: MoonPhase; startedAt: number }) {
   const { locale } = usePreferences()
+  const [clock, setClock] = useState(() => Date.now())
+  useEffect(() => {
+    if (phase !== 'waxing') return
+    setClock(Date.now())
+    const timer = window.setInterval(() => setClock(Date.now()), 250)
+    return () => window.clearInterval(timer)
+  }, [phase, startedAt])
   if (phase === 'new') return null
   const english = locale === 'en-US'
   const labels: Record<MoonPhase, [string, string]> = {
     new: ['已完成', 'Completed'],
-    waxing: ['正在接收请求', 'Receiving request'],
+    waxing: ['请求已发送，等待 Kimi 响应', 'Sent, waiting for Kimi'],
     'first-quarter': ['正在深空思考', 'Thinking in deep space'],
     gibbous: ['正在执行工具', 'Running tools'],
     full: ['等待你的确认', 'Awaiting your approval'],
     waning: ['正在整理结果', 'Wrapping up']
   }
   const active = phase !== 'full'
+  const waitingSeconds = Math.max(0, clock - startedAt) / 1000
   return (
     <div
       data-working-indicator
@@ -229,6 +238,7 @@ function WorkingIndicator({ phase }: { phase: MoonPhase }) {
       </span>
       <span style={{ fontSize: 11.5, letterSpacing: '0.01em', color: phase === 'full' ? 'var(--dust)' : 'var(--moonlight)' }}>
         {labels[phase][english ? 1 : 0]}
+        {phase === 'waxing' && waitingSeconds >= 1 ? ` · ${waitingSeconds.toFixed(1)}s` : ''}
       </span>
     </div>
   )
@@ -336,12 +346,16 @@ function TurnGroup({
   turn,
   completed,
   phase,
-  lastId
+  lastId,
+  showChangeCard,
+  sessionId
 }: {
   turn: Turn
   completed: boolean
   phase: MoonPhase
   lastId?: string
+  showChangeCard: boolean
+  sessionId: string
 }) {
   const { t } = usePreferences()
   const [open, setOpen] = useState(false)
@@ -396,6 +410,7 @@ function TurnGroup({
       {!completed ? (
         <NarrativeEvents events={narrativeEvents} phase={phase} lastId={lastId} live />
       ) : null}
+      {completed && showChangeCard ? <TurnChangesCard sessionId={sessionId} events={turn.events} /> : null}
     </section>
   )
 }
@@ -404,6 +419,7 @@ function TurnGroup({
 export function TrajectoryView({ session }: { session: Session }) {
   const { t } = usePreferences()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
   // 运行时注入仅供 Agent 使用，不属于用户与助手的对话内容。
   const visibleEvents = session.events.filter((event) => event.kind !== 'system')
@@ -426,6 +442,22 @@ export function TrajectoryView({ session }: { session: Session }) {
     if (element) element.scrollTop = element.scrollHeight
   }, [session.id])
 
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+    const observer = new ResizeObserver(() => {
+      const element = scrollRef.current
+      if (!element) return
+      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight
+      if (pinnedRef.current || distanceFromBottom < 180) {
+        element.scrollTop = element.scrollHeight
+        pinnedRef.current = true
+      }
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [session.id])
+
   const lastId = visibleEvents[visibleEvents.length - 1]?.id
 
   return (
@@ -441,6 +473,7 @@ export function TrajectoryView({ session }: { session: Session }) {
           </div>
         ) : (
           <div
+            ref={contentRef}
             role="log"
             style={{
               position: 'relative',
@@ -462,6 +495,8 @@ export function TrajectoryView({ session }: { session: Session }) {
                   completed={completed}
                   phase={session.phase}
                   lastId={lastId}
+                  showChangeCard={isLastTurn}
+                  sessionId={session.id}
                 />
               )
             })}
@@ -470,7 +505,7 @@ export function TrajectoryView({ session }: { session: Session }) {
       </div>
       {session.phase !== 'new' ? (
         <div style={{ flexShrink: 0, padding: '7px 24px 8px', borderTop: '1px solid var(--line)', background: 'color-mix(in srgb, var(--mare) 88%, transparent)' }}>
-          <WorkingIndicator phase={session.phase} />
+          <WorkingIndicator phase={session.phase} startedAt={session.updatedAt} />
         </div>
       ) : null}
     </div>

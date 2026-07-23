@@ -60,6 +60,8 @@ export const IPC = {
   AgentWorkspaceRead: 'agent:workspace-read',
   AgentGitChanges: 'agent:git-changes',
   AgentGitDiff: 'agent:git-diff',
+  AgentTurnChanges: 'agent:turn-changes',
+  AgentTurnChangesResolve: 'agent:turn-changes-resolve',
   AgentMcpList: 'agent:mcp-list',
   AgentSkillList: 'agent:skill-list',
   AgentAuthStart: 'agent:auth-start',
@@ -200,6 +202,7 @@ export interface AgentSessionActionInput {
   sessionId: string
   action: 'abort' | 'compact' | 'undo'
   instruction?: string
+  count?: number
 }
 
 /** 会话进行中更新完整 agent_config；profile 接口是整体替换，必须带全量字段。 */
@@ -239,6 +242,7 @@ export interface AgentApprovalInput {
   approvalId: string
   decision: ApprovalDecision
   feedback?: string
+  selectedLabel?: string
 }
 
 export interface AgentActionResult {
@@ -315,6 +319,19 @@ export interface GitDiffResult extends AgentActionResult {
   diff?: string
   additions: number
   deletions: number
+}
+
+export interface TurnChangesResult extends AgentActionResult {
+  changes: GitChange[]
+  tracked: boolean
+  undoAvailable: boolean
+}
+
+export interface TurnChangesResolveInput {
+  sessionId: string
+  action: 'undo' | 'keep'
+  path?: string
+  count?: number
 }
 
 export interface McpServerInfo {
@@ -553,6 +570,8 @@ export interface FarsideApi {
     readWorkspaceFile(sessionId: string, path: string): Promise<WorkspaceReadResult>
     getGitChanges(sessionId: string): Promise<GitChangesResult>
     getGitDiff(sessionId: string, path: string): Promise<GitDiffResult>
+    getTurnChanges(sessionId: string): Promise<TurnChangesResult>
+    resolveTurnChanges(input: TurnChangesResolveInput): Promise<TurnChangesResult>
     listMcpServers(): Promise<McpListResult>
     listSkills(sessionId: string): Promise<SkillListResult>
     startLogin(): Promise<AuthFlowResult>

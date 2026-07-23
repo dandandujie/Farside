@@ -11,6 +11,7 @@ import { PrismLine } from '../../design-system/PrismLine'
 import { SLASH_COMMANDS, type SlashCommand } from './slashCommands'
 import type { WorkspaceEntry } from '@shared/ipc'
 import { usePreferences } from '../../lib/preferences'
+import { PromptQueue } from './PromptQueue'
 
 /** 上下文窗口换算：1_000_000 → 1M，262_144 → 256K */
 function formatContextWindow(n: number): string {
@@ -153,7 +154,7 @@ export function Composer() {
   }
 
   const handleSend = () => {
-    if ((!draft.trim() && attachments.length === 0) || sending || activeSession?.phase !== 'new') return
+    if (!draft.trim() && attachments.length === 0) return
     send(refs.map((ref) => ref.path))
     setRefs([])
   }
@@ -285,7 +286,7 @@ export function Composer() {
     }
   }
 
-  const canSend = (draft.trim().length > 0 || attachments.length > 0) && !sending && activeSession?.phase === 'new'
+  const canSend = (draft.trim().length > 0 || attachments.length > 0) && Boolean(activeSessionId)
   const accountModels = (account?.models ?? [])
     .filter((item) => !account?.activeProviderId || item.providerId === account.activeProviderId)
     .map((item) => ({
@@ -300,6 +301,7 @@ export function Composer() {
 
   return (
     <div style={{ padding: '0 20px 16px', flexShrink: 0 }}>
+      {activeSessionId ? <PromptQueue sessionId={activeSessionId} /> : null}
       <div
         onDragOver={(e) => {
           e.preventDefault()
@@ -613,7 +615,15 @@ export function Composer() {
           }}
           onKeyDown={onTextareaKeyDown}
           onPaste={handlePaste}
-          placeholder={locale === 'en-US' ? 'Send an instruction…  Paste or drop an image · / commands · @ files' : '向月背发送指令…  粘贴或拖入图片 · / 斜杠命令 · @ 引用文件'}
+          placeholder={
+            sending
+              ? locale === 'en-US'
+                ? 'Kimi is working — press Enter to add another request to the queue…'
+                : 'Kimi 正在处理 · 继续输入并按回车加入队列…'
+              : locale === 'en-US'
+                ? 'Send an instruction…  Paste or drop an image · / commands · @ files'
+                : '向月背发送指令…  粘贴或拖入图片 · / 斜杠命令 · @ 引用文件'
+          }
           style={{
             display: 'block',
             width: '100%',
@@ -848,8 +858,8 @@ export function Composer() {
 
           {/* ── 发送：发送中变为呼吸的峨眉月 ── */}
           <button
-            aria-label={t('发送')}
-            title={`${t('发送')} (Enter)`}
+            aria-label={sending ? (locale === 'en-US' ? 'Add to queue' : '加入队列') : t('发送')}
+            title={`${sending ? (locale === 'en-US' ? 'Add to queue' : '加入队列') : t('发送')} (Enter)`}
             disabled={!canSend}
             onClick={handleSend}
             style={{
@@ -865,7 +875,7 @@ export function Composer() {
               cursor: canSend ? 'pointer' : 'default'
             }}
           >
-            {sending ? (
+            {sending && !canSend ? (
               // 复用 base.css 的 caret-breathe 关键帧做月相呼吸
               <span
                 style={{

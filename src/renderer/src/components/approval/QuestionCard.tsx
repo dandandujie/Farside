@@ -48,7 +48,7 @@ export function QuestionCard({ request }: { request: QuestionRequest }) {
   }
 
   return (
-    <div style={{ padding: '0 20px 10px', flexShrink: 0 }}>
+    <div style={{ padding: '0 20px 10px', flexShrink: 1, minHeight: 0, overflowY: 'auto' }}>
       <section
         style={{
           position: 'relative',

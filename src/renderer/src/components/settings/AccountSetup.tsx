@@ -94,11 +94,15 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
       void window.api!.agent.pollLogin().then((result) => {
         if (!result.ok) {
           setPending(false)
+          setVerificationUri(null)
+          setUserCode(null)
           setLocalError(result.error ?? '登录状态查询失败')
           return
         }
         if (result.ready) {
           setPending(false)
+          setVerificationUri(null)
+          setUserCode(null)
           setSaved(true)
           void initialize()
         }
@@ -125,6 +129,8 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
     setLocalError(null)
     useFarsideStore.setState({ lastError: null })
     setSaved(false)
+    setVerificationUri(null)
+    setUserCode(null)
     const result = await window.api?.agent.startLogin()
     if (!result) {
       setPending(false)
@@ -133,11 +139,15 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
     }
     if (!result.ok) {
       setPending(false)
+      setVerificationUri(null)
+      setUserCode(null)
       setLocalError(result.error ?? '登录流程启动失败')
       return
     }
     if (result.ready) {
       setPending(false)
+      setVerificationUri(null)
+      setUserCode(null)
       setSaved(true)
       await initialize()
       return
@@ -253,7 +263,7 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
                   ? (english ? 'Waiting…' : '等待授权…')
                   : (english ? 'Starting service…' : '正在启动服务…')
                 : activeKind === 'kimi-oauth'
-                  ? (english ? 'Reauthorize' : '重新授权')
+                  ? (english ? 'Refresh sign-in' : '刷新登录状态')
                   : (english ? 'Sign in with Kimi' : '使用 Kimi 登录')}
             </button>
           </div>

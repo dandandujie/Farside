@@ -26,17 +26,6 @@ const ITEMS: RailItem[] = [
     )
   },
   {
-    view: 'terminal',
-    label: '终端',
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-        <rect x="1.5" y="2.5" width="15" height="13" rx="2" stroke={STROKE} strokeWidth="1" />
-        <path d="M4.5 6.5 7.5 9 4.5 11.5" stroke={STROKE} strokeWidth="1" strokeLinecap="round" />
-        <line x1="9.5" y1="11.5" x2="13" y2="11.5" stroke={STROKE} strokeWidth="1" strokeLinecap="round" />
-      </svg>
-    )
-  },
-  {
     view: 'goals',
     label: '目标',
     icon: (

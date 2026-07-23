@@ -191,6 +191,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.AgentGitDiff, (_event, sessionId: string, path: string) =>
     kimiClient.getGitDiff(sessionId, path)
   )
+  ipcMain.handle(IPC.AgentTurnChanges, (_event, sessionId: string) =>
+    kimiClient.getTurnChanges(sessionId)
+  )
+  ipcMain.handle(IPC.AgentTurnChangesResolve, (_event, input) =>
+    kimiClient.resolveTurnChanges(input)
+  )
   ipcMain.handle(IPC.AgentMcpList, () => kimiClient.listMcpServers())
   ipcMain.handle(IPC.AgentSkillList, (_event, sessionId: string) => kimiClient.listSkills(sessionId))
   ipcMain.handle(IPC.AgentAuthStart, () => kimiClient.startLogin())

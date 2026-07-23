@@ -171,14 +171,70 @@ button {
   transition: background-color 180ms var(--ease-farside), opacity 180ms var(--ease-farside);
 }
 
-/* 成员卡片收窄成固定宽度，横向排列，超出时横向滚动 */
+/* 成员卡片收窄成固定宽度，横向排列；边缘辉光提示轨道仍可继续浏览。 */
+.swarm-grid-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.swarm-grid-shell::before,
+.swarm-grid-shell::after {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 8px;
+  width: 26px;
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms var(--ease-farside);
+}
+
+.swarm-grid-shell::before {
+  left: 0;
+  background: linear-gradient(90deg, var(--regolith), transparent);
+}
+
+.swarm-grid-shell::after {
+  right: 0;
+  background: linear-gradient(270deg, var(--regolith), transparent);
+}
+
+.swarm-grid-shell[data-can-scroll-back='true']::before,
+.swarm-grid-shell[data-can-scroll-forward='true']::after {
+  opacity: 0.92;
+}
+
 .swarm-grid {
   display: flex;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 9px 10px 10px;
+  padding: 9px 10px 8px;
   gap: 6px;
   overscroll-behavior: contain;
+  scrollbar-color: var(--line-hi) transparent;
+  scrollbar-width: thin;
+  scroll-behavior: smooth;
+  scroll-padding: 10px;
+  scroll-snap-type: x proximity;
+}
+
+.swarm-grid:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--moonlight) 52%, transparent);
+  outline-offset: -2px;
+}
+
+.swarm-grid::-webkit-scrollbar {
+  height: 5px;
+}
+
+.swarm-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.swarm-grid::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--line-hi);
 }
 
 .swarm-member {
@@ -189,6 +245,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: color-mix(in srgb, var(--mare) 68%, transparent);
+  scroll-snap-align: start;
 }
 
 .swarm-member[data-status='in-orbit'],
@@ -267,6 +324,76 @@ button {
   white-space: nowrap;
 }
 
+/* ── 项目分组：沿用 Agent Swarm 的 Prism 信号语言 ───────────── */
+.project-header {
+  position: relative;
+  display: flex;
+  min-height: 43px;
+  align-items: center;
+  margin: 0 7px 3px;
+  padding: 5px 7px 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--regolith) 94%, transparent),
+      color-mix(in srgb, var(--mare) 96%, transparent)
+    ) padding-box,
+    var(--prism) border-box;
+  gap: 8px;
+}
+
+.project-header::after {
+  position: absolute;
+  right: 10px;
+  bottom: -1px;
+  left: 10px;
+  height: 1px;
+  background: var(--prism);
+  content: '';
+  opacity: 0.44;
+}
+
+.project-header__name {
+  overflow: hidden;
+  background: var(--prism);
+  background-clip: text;
+  color: transparent;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-background-clip: text;
+}
+
+.project-header__count {
+  min-width: 18px;
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--moonlight) 12%, transparent);
+  border-radius: 999px;
+  color: var(--faint);
+  font-size: 8.5px;
+  text-align: center;
+}
+
+.project-header__root {
+  display: block;
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--ghost);
+  font-size: 8.5px;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-header[data-archived='true'] {
+  filter: saturate(0.22);
+  opacity: 0.7;
+}
+
 /* ── 工作月相：真实月相保持不变，仅外层轨道旋转并产生轻微月光 ─── */
 @keyframes moon-orbit-spin {
   to {
@@ -302,6 +429,51 @@ button {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+.terminal-drawer {
+  animation: terminal-drawer-rise 180ms var(--ease-farside) both;
+}
+
+.environment-summary {
+  animation: environment-summary-arrive 160ms var(--ease-farside) both;
+}
+
+.turn-changes-card {
+  animation: turn-changes-arrive 180ms var(--ease-farside) both;
+}
+
+@keyframes terminal-drawer-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes environment-summary-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes turn-changes-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -553,9 +725,47 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .terminal-drawer,
+  .environment-summary,
+  .turn-changes-card,
+  .undo-selector,
   .update-prompt__progress > span {
     animation: none;
     transition: none;
+  }
+}
+
+.undo-selector {
+  animation: undo-selector-in 150ms var(--ease-farside) both;
+}
+
+.prompt-queue {
+  animation: prompt-queue-in 160ms var(--ease-farside) both;
+}
+
+.plan-review-card {
+  animation: turn-changes-arrive 180ms var(--ease-farside) both;
+}
+
+@keyframes prompt-queue-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes undo-selector-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

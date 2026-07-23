@@ -40,11 +40,17 @@ function git(sourceDir, args) {
 
 function patchState(sourceDir) {
   try {
-    git(sourceDir, ['apply', '--check', ...patchPaths])
+    git(sourceDir, ['apply', '--ignore-space-change', '--check', ...patchPaths])
     return 'clean'
   } catch {}
   try {
-    git(sourceDir, ['apply', '--reverse', '--check', ...patchPaths.toReversed()])
+    git(sourceDir, [
+      'apply',
+      '--ignore-space-change',
+      '--reverse',
+      '--check',
+      ...patchPaths.toReversed()
+    ])
     return 'applied'
   } catch {
     return 'conflict'
@@ -68,7 +74,7 @@ export async function run(argv) {
     throw new Error('补丁既不能正向应用，也不能反向校验；源码目录可能包含冲突改动')
   }
   if (mode === '--apply' && state === 'clean') {
-    git(sourceDir, ['apply', ...patchPaths])
+    git(sourceDir, ['apply', '--ignore-space-change', ...patchPaths])
     process.stdout.write(`已应用 ${patchPaths.length} 个 Farside harness 补丁\n`)
     return
   }

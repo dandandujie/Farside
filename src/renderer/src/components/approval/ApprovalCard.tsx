@@ -150,7 +150,7 @@ export function ApprovalCard({ request }: { request: ApprovalRequest }) {
     // data-approval-card：trajectory 的 ApprovalNode 点击时靠它定位本卡（scrollIntoView + focus）
     <div
       data-approval-card
-      style={{ padding: '0 20px 10px', flexShrink: 0 }}
+      style={{ padding: '0 20px 10px', flexShrink: 1, minHeight: 0, overflowY: 'auto' }}
       className="fade-in"
     >
       <div

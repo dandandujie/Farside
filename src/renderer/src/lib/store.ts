@@ -17,7 +17,7 @@ import type {
 import { MODELS } from '@shared/types'
 import { MOCK_APPROVAL, MOCK_SESSIONS } from './mock'
 
-export type RailView = 'sessions' | 'terminal' | 'goals' | 'settings'
+export type RailView = 'sessions' | 'goals' | 'settings'
 export type MissionTab = 'diff' | 'telemetry' | 'files' | 'preview'
 
 export interface PreviewDocument {
@@ -27,6 +27,20 @@ export interface PreviewDocument {
   kind: 'markdown' | 'html' | 'image' | 'text' | 'url'
   mime?: string
   encoding?: 'utf8' | 'base64'
+}
+
+export interface QueuedPrompt {
+  id: string
+  sessionId: string
+  text: string
+  fileRefs: string[]
+  attachments: Attachment[]
+  model: ModelId
+  permissionMode: PermissionMode
+  planMode: boolean
+  swarmMode: boolean
+  goalObjective?: string
+  createdAt: number
 }
 
 interface FarsideState {
@@ -63,6 +77,10 @@ interface FarsideState {
   view: RailView
   setView(view: RailView): void
   pendingTerminalCommand: { id: number; command: string } | null
+  terminalOpen: boolean
+  terminalMounted: boolean
+  toggleTerminal(): void
+  openTerminal(): void
   runInTerminal(command: string): void
   consumeTerminalCommand(id: number): void
   sidebarOpen: boolean
@@ -71,11 +89,15 @@ interface FarsideState {
   toggleMission(): void
   missionTab: MissionTab
   setMissionTab(tab: MissionTab): void
+  reviewFilePath: string | null
+  reviewChanges(path?: string): void
   preview: PreviewDocument | null
   openPreview(preview: PreviewDocument): void
   closePreview(): void
   paletteOpen: boolean
   setPaletteOpen(open: boolean): void
+  undoSelectorOpen: boolean
+  setUndoSelectorOpen(open: boolean): void
 
   draft: string
   setDraft(text: string): void
@@ -93,15 +115,27 @@ interface FarsideState {
   swarmMode: boolean
   setSwarmMode(enabled: boolean): void
   abortCurrent(): void
+  undoTurns(count: number): void
   undoLastTurn(): void
   editLastPrompt(): void
   sending: boolean
   send(fileRefs?: string[]): void
+  promptQueues: Record<string, QueuedPrompt[]>
+  queueDispatchPending: Record<string, string>
+  updateQueuedPrompt(sessionId: string, id: string, text: string): void
+  removeQueuedPrompt(sessionId: string, id: string): void
+  clearPromptQueue(sessionId: string): void
+  dispatchNextQueued(sessionId: string): void
 
   composerBySession: Record<string, SessionComposerState>
 
   approvalQueue: ApprovalRequest[]
-  resolveApproval(id: string, decision?: ApprovalDecision, feedback?: string): void
+  resolveApproval(
+    id: string,
+    decision?: ApprovalDecision,
+    feedback?: string,
+    selectedLabel?: string
+  ): void
   questionQueue: QuestionRequest[]
   resolveQuestion(id: string, answers: Record<string, QuestionAnswer>): void
 
@@ -489,6 +523,11 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       draft: '',
       attachments: [],
       projects: [],
+      promptQueues: {},
+      queueDispatchPending: {},
+      terminalOpen: false,
+      terminalMounted: false,
+      pendingTerminalCommand: null,
       connected: false,
       lastError: null
     })
@@ -770,8 +809,17 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   view: 'sessions',
   setView: (view) => set({ view }),
   pendingTerminalCommand: null,
+  terminalOpen: false,
+  terminalMounted: false,
+  toggleTerminal: () => set((state) => ({
+    terminalOpen: !state.terminalOpen,
+    terminalMounted: true
+  })),
+  openTerminal: () => set({ view: 'sessions', terminalOpen: true, terminalMounted: true }),
   runInTerminal: (command) => set({
-    view: 'terminal',
+    view: 'sessions',
+    terminalOpen: true,
+    terminalMounted: true,
     pendingTerminalCommand: { id: Date.now(), command }
   }),
   consumeTerminalCommand: (id) => set((state) => ({
@@ -779,15 +827,23 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   })),
   sidebarOpen: true,
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
-  missionOpen: true,
+  missionOpen: false,
   toggleMission: () => set((state) => ({ missionOpen: !state.missionOpen })),
   missionTab: 'telemetry',
   setMissionTab: (missionTab) => set({ missionTab }),
+  reviewFilePath: null,
+  reviewChanges: (reviewFilePath) => set({
+    missionOpen: true,
+    missionTab: 'diff',
+    reviewFilePath: reviewFilePath ?? null
+  }),
   preview: null,
   openPreview: (preview) => set({ preview, missionOpen: true, missionTab: 'preview' }),
   closePreview: () => set({ preview: null }),
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  undoSelectorOpen: false,
+  setUndoSelectorOpen: (undoSelectorOpen) => set({ undoSelectorOpen }),
 
   draft: '',
   setDraft: (draft) => set((state) => composerPatch(state, { draft })),
@@ -847,28 +903,43 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           if (!result.ok) set({ lastError: result.error ?? '任务中断失败' })
       })
   },
-  undoLastTurn: () => {
+  undoTurns: (count) => {
     const state = get()
     const sessionId = state.activeSessionId
     const active = state.sessions.find((session) => session.id === sessionId)
     const api = window.api?.agent
-    if (!sessionId || !api || active?.phase !== 'new') return
-    void api.runSessionAction({ sessionId, action: 'undo' }).then(async (result) => {
+    if (
+      !sessionId ||
+      !api ||
+      active?.phase !== 'new' ||
+      !Number.isSafeInteger(count) ||
+      count < 1 ||
+      count > 100
+    ) return
+    set({ undoSelectorOpen: false })
+    void (async () => {
+      const fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count })
+      if (!fileResult.ok) {
+        set({ lastError: fileResult.error ?? '文件改动撤销失败' })
+        return
+      }
+      const result = await api.runSessionAction({ sessionId, action: 'undo', count })
       if (!result.ok) {
-        set({ lastError: result.error ?? '撤回上一轮失败' })
+        set({ lastError: result.error ?? '请求回退失败' })
         return
       }
       const loaded = await api.loadSession(sessionId)
       if (!loaded.ok || !loaded.session) {
-        set({ lastError: loaded.error ?? '撤回成功，但会话刷新失败' })
+        set({ lastError: loaded.error ?? '回退成功，但会话刷新失败' })
         return
       }
       set((current) => ({
         sessions: upsertSession(current.sessions, resolveSessionProject(loaded.session as Session, current.projects)),
         lastError: null
       }))
-    })
+    })()
   },
+  undoLastTurn: () => get().undoTurns(1),
   editLastPrompt: () => {
     const state = get()
     const sessionId = state.activeSessionId
@@ -880,7 +951,13 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       get().setDraft(prompt.text)
       return
     }
-    void api.runSessionAction({ sessionId, action: 'undo' }).then(async (result) => {
+    void (async () => {
+      const fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count: 1 })
+      if (!fileResult.ok) {
+        set({ lastError: fileResult.error ?? '本轮文件改动撤销失败' })
+        return
+      }
+      const result = await api.runSessionAction({ sessionId, action: 'undo', count: 1 })
       if (!result.ok) {
         set({ lastError: result.error ?? '重新编辑上一轮失败' })
         return
@@ -893,13 +970,13 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         ...composerPatch(current, { draft: prompt.text }),
         lastError: loaded.ok ? null : loaded.error ?? '上一轮已撤回，但会话刷新失败'
       }))
-    })
+    })()
   },
   sending: false,
   send: (fileRefs = []) => {
     const state = get()
     const text = state.draft.trim()
-    if ((!text && state.attachments.length === 0) || state.sending) return
+    if (!text && state.attachments.length === 0) return
     let promptText = text
     let goalObjective: string | undefined
     const command = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text)
@@ -1037,69 +1114,124 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       }
     }
     if (!state.activeSessionId) return
-    const api = window.api?.agent
-    if (!api) {
-      const event: TrajectoryEvent = {
-        id: `user-${Date.now()}`,
-        kind: 'user',
-        at: Date.now(),
-        text: promptText,
-        attachments: state.attachments.length ? state.attachments : undefined
-      }
-      set((current) => ({
-        ...composerPatchForSession(current, state.activeSessionId as string, { draft: '', attachments: [] }),
-        sessions: current.sessions.map((session) =>
-          session.id === current.activeSessionId
-            ? { ...session, phase: 'waxing', updatedAt: Date.now(), events: [...session.events, event] }
-            : session
-        )
-      }))
+    const queue = state.promptQueues[state.activeSessionId] ?? []
+    if (queue.length >= 20) {
+      set({ lastError: '当前会话的等待队列已达 20 条，请先处理或移除部分请求' })
       return
     }
-    const attachments = state.attachments
-    const optimisticId = `user-local-${Date.now()}`
+    const queued: QueuedPrompt = {
+      id: `queued-${crypto.randomUUID()}`,
+      sessionId: state.activeSessionId,
+      text: promptText,
+      fileRefs,
+      attachments: state.attachments,
+      model: state.model,
+      permissionMode: state.permissionMode,
+      planMode: state.planMode,
+      swarmMode: state.swarmMode,
+      ...(goalObjective ? { goalObjective } : {}),
+      createdAt: Date.now()
+    }
+    set((current) => ({
+      ...composerPatchForSession(current, state.activeSessionId as string, { draft: '', attachments: [] }),
+      lastError: null,
+      promptQueues: {
+        ...current.promptQueues,
+        [state.activeSessionId as string]: [...(current.promptQueues[state.activeSessionId as string] ?? []), queued]
+      }
+    }))
+    queueMicrotask(() => get().dispatchNextQueued(queued.sessionId))
+  },
+  promptQueues: {},
+  queueDispatchPending: {},
+  updateQueuedPrompt: (sessionId, id, text) =>
+    set((state) => ({
+      promptQueues: {
+        ...state.promptQueues,
+        [sessionId]: (state.promptQueues[sessionId] ?? []).map((item) =>
+          item.id === id ? { ...item, text } : item
+        )
+      }
+    })),
+  removeQueuedPrompt: (sessionId, id) =>
+    set((state) => ({
+      promptQueues: {
+        ...state.promptQueues,
+        [sessionId]: (state.promptQueues[sessionId] ?? []).filter((item) => item.id !== id)
+      }
+    })),
+  clearPromptQueue: (sessionId) =>
+    set((state) => ({ promptQueues: { ...state.promptQueues, [sessionId]: [] } })),
+  dispatchNextQueued: (sessionId) => {
+    const state = get()
+    const session = state.sessions.find((item) => item.id === sessionId)
+    const queued = state.promptQueues[sessionId]?.[0]
+    const api = window.api?.agent
+    if (
+      !session ||
+      session.phase !== 'new' ||
+      !queued ||
+      state.queueDispatchPending[sessionId] ||
+      !api
+    ) return
+    const optimisticId = `user-local-${Date.now()}-${queued.id}`
     const optimisticEvent: TrajectoryEvent = {
       id: optimisticId,
       kind: 'user',
       at: Date.now(),
-      text: promptText,
-      attachments: attachments.length ? attachments : undefined
+      text: queued.text,
+      attachments: queued.attachments.length ? queued.attachments : undefined
     }
     set((current) => ({
-      ...composerPatchForSession(current, state.activeSessionId as string, { draft: '', attachments: [] }),
-      sending: true,
+      sending: current.activeSessionId === sessionId ? true : current.sending,
       lastError: null,
-      sessions: current.sessions.map((session) =>
-        session.id === state.activeSessionId
+      promptQueues: {
+        ...current.promptQueues,
+        [sessionId]: (current.promptQueues[sessionId] ?? []).slice(1)
+      },
+      queueDispatchPending: {
+        ...current.queueDispatchPending,
+        [sessionId]: queued.id
+      },
+      sessions: current.sessions.map((item) =>
+        item.id === sessionId
           ? {
-              ...session,
+              ...item,
               phase: 'waxing',
               updatedAt: optimisticEvent.at,
-              events: [...session.events, optimisticEvent]
+              events: [...item.events, optimisticEvent]
             }
-          : session
+          : item
       )
     }))
     void api
       .submitPrompt({
-        sessionId: state.activeSessionId,
-        text: promptText,
-        fileRefs,
-        attachments,
-        model: state.model,
-        permissionMode: state.permissionMode,
-        planMode: state.planMode,
-        swarmMode: state.swarmMode,
-        goalObjective
+        sessionId,
+        text: queued.text,
+        fileRefs: queued.fileRefs,
+        attachments: queued.attachments,
+        model: queued.model,
+        permissionMode: queued.permissionMode,
+        planMode: queued.planMode,
+        swarmMode: queued.swarmMode,
+        goalObjective: queued.goalObjective
       })
       .then((result) => {
         if (result.ok) return
         set((current) => ({
-          ...composerPatchForSession(current, state.activeSessionId as string, { draft: text, attachments }),
-          sending: current.activeSessionId === state.activeSessionId ? false : current.sending,
+          sending: current.activeSessionId === sessionId ? false : current.sending,
           lastError: result.error ?? '指令发送失败',
+          promptQueues: {
+            ...current.promptQueues,
+            [sessionId]: [queued, ...(current.promptQueues[sessionId] ?? [])]
+          },
+          queueDispatchPending: Object.fromEntries(
+            Object.entries(current.queueDispatchPending).filter(
+              ([key, id]) => key !== sessionId || id !== queued.id
+            )
+          ),
           sessions: current.sessions.map((session) =>
-            session.id === state.activeSessionId
+            session.id === sessionId
               ? { ...session, phase: 'new', events: session.events.filter((event) => event.id !== optimisticId) }
               : session
           )
@@ -1108,7 +1240,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   },
 
   approvalQueue: [],
-  resolveApproval: (id, decision = 'deny', feedback) => {
+  resolveApproval: (id, decision = 'deny', feedback, selectedLabel) => {
     const approval = get().approvalQueue.find((item) => item.id === id)
     if (!approval) return
     const api = window.api?.agent
@@ -1119,10 +1251,20 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         sessionId: approval.sessionId,
         approvalId: id,
         decision,
-        feedback
+        feedback,
+        selectedLabel
       })
       .then((result) => {
-        if (result.ok) return
+        if (result.ok) {
+          if (
+            approval.planReview &&
+            selectedLabel !== 'Revise' &&
+            selectedLabel !== 'Reject'
+          ) {
+            set((state) => composerPatchForSession(state, approval.sessionId, { planMode: false }))
+          }
+          return
+        }
         set((state) => ({
           approvalQueue: [approval, ...state.approvalQueue],
           lastError: result.error ?? '审批应答失败'
@@ -1224,15 +1366,25 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       return
     }
     if (update.kind === 'session-patch') {
-      set((state) => ({
-        sessions: state.sessions.map((session) =>
-          session.id === update.sessionId ? { ...session, ...update.patch } : session
-        ),
-        sending:
-          update.sessionId === state.activeSessionId && update.patch.phase
-            ? update.patch.phase !== 'new'
-            : state.sending
-      }))
+      set((state) => {
+        const queueDispatchPending = { ...state.queueDispatchPending }
+        if (update.patch.phase && update.patch.phase !== 'new') {
+          delete queueDispatchPending[update.sessionId]
+        }
+        return {
+          sessions: state.sessions.map((session) =>
+            session.id === update.sessionId ? { ...session, ...update.patch } : session
+          ),
+          queueDispatchPending,
+          sending:
+            update.sessionId === state.activeSessionId && update.patch.phase
+              ? update.patch.phase !== 'new'
+              : state.sending
+        }
+      })
+      if (update.patch.phase === 'new') {
+        queueMicrotask(() => get().dispatchNextQueued(update.sessionId))
+      }
       return
     }
     if (update.kind === 'event-upsert') {

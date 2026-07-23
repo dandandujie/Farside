@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SatelliteEvent, SatelliteStatus } from '@shared/types'
 import { Chevron, SatelliteArc } from './markers'
 import { usePreferences } from '../../../lib/preferences'
@@ -113,6 +113,83 @@ function SatelliteMember({ event, index, now }: { event: SatelliteEvent; index: 
   )
 }
 
+function SwarmRail({
+  events,
+  now
+}: {
+  events: SatelliteEvent[]
+  now: number
+}) {
+  const { locale } = usePreferences()
+  const railRef = useRef<HTMLDivElement>(null)
+  const [canScrollBack, setCanScrollBack] = useState(false)
+  const [canScrollForward, setCanScrollForward] = useState(false)
+
+  const syncEdges = useCallback(() => {
+    const rail = railRef.current
+    if (!rail) return
+    const maxScrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth)
+    setCanScrollBack(rail.scrollLeft > 1)
+    setCanScrollForward(rail.scrollLeft < maxScrollLeft - 1)
+  }, [])
+
+  useEffect(() => {
+    const rail = railRef.current
+    if (!rail) return
+    syncEdges()
+    const observer = new ResizeObserver(syncEdges)
+    observer.observe(rail)
+    return () => observer.disconnect()
+  }, [events.length, syncEdges])
+
+  return (
+    <div
+      className="swarm-grid-shell"
+      data-can-scroll-back={canScrollBack || undefined}
+      data-can-scroll-forward={canScrollForward || undefined}
+    >
+      <div
+        ref={railRef}
+        className="swarm-grid"
+        role="region"
+        tabIndex={0}
+        aria-label={locale === 'en-US' ? 'Agent swarm, scroll horizontally' : 'Agent Swarm，可横向滚动'}
+        onScroll={syncEdges}
+        onWheel={(event) => {
+          const rail = event.currentTarget
+          const maxScrollLeft = rail.scrollWidth - rail.clientWidth
+          if (maxScrollLeft <= 1) return
+          const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+          if (!delta) return
+          const next = Math.max(0, Math.min(maxScrollLeft, rail.scrollLeft + delta))
+          if (Math.abs(next - rail.scrollLeft) < 1) return
+          event.preventDefault()
+          rail.scrollLeft = next
+        }}
+        onKeyDown={(event) => {
+          const rail = event.currentTarget
+          const step = Math.max(180, rail.clientWidth * 0.72)
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            event.preventDefault()
+            rail.scrollBy({
+              left: event.key === 'ArrowLeft' ? -step : step,
+              behavior: 'smooth'
+            })
+          } else if (event.key === 'Home' || event.key === 'End') {
+            event.preventDefault()
+            rail.scrollTo({
+              left: event.key === 'Home' ? 0 : rail.scrollWidth,
+              behavior: 'smooth'
+            })
+          }
+        }}
+      >
+        {events.map((event, index) => <SatelliteMember key={event.id} event={event} index={index} now={now} />)}
+      </div>
+    </div>
+  )
+}
+
 /**
  * Kimi TUI AgentSwarm 的桌面映射：整体总览 + 横向滚动的窄成员卡片 + 活动信号条。
  * 运行时保持展开，全部结束后自动收起；用户仍可手动查看每颗卫星的任务与结果。
@@ -159,9 +236,7 @@ export function SatelliteGroup({ events }: { events: SatelliteEvent[] }) {
           .map((event) => <span key={event.id} style={{ background: statusColor(event.status) }} />)}
       </div>
       {open ? (
-        <div className="swarm-grid">
-          {sorted.map((event, index) => <SatelliteMember key={event.id} event={event} index={index} now={now} />)}
-        </div>
+        <SwarmRail events={sorted} now={now} />
       ) : null}
     </section>
   )
