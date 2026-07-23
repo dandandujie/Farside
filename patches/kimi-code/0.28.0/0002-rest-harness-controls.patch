@@ -1,0 +1,154 @@
+diff --git a/packages/agent-core-v2/src/app/sessionLegacy/sessionLegacyService.ts b/packages/agent-core-v2/src/app/sessionLegacy/sessionLegacyService.ts
+index b3f784d6..10d1e61e 100644
+--- a/packages/agent-core-v2/src/app/sessionLegacy/sessionLegacyService.ts
++++ b/packages/agent-core-v2/src/app/sessionLegacy/sessionLegacyService.ts
+@@ -95,6 +95,14 @@ export class SessionLegacyService implements ISessionLegacyService {
+     if (agentConfig.thinking !== undefined) {
+       profile.setThinking(agentConfig.thinking);
+     }
++    if (agentConfig.system_prompt !== undefined || agentConfig.tools !== undefined) {
++      profile.update({
++        ...(agentConfig.system_prompt !== undefined
++          ? { systemPrompt: agentConfig.system_prompt }
++          : {}),
++        ...(agentConfig.tools !== undefined ? { activeToolNames: agentConfig.tools } : {}),
++      });
++    }
+     if (agentConfig.permission_mode !== undefined) {
+       agent.accessor
+         .get(IAgentPermissionModeService)
+diff --git a/packages/agent-core-v2/test/app/sessionLegacy/sessionLegacy.test.ts b/packages/agent-core-v2/test/app/sessionLegacy/sessionLegacy.test.ts
+index c851d4c4..2f0105d1 100644
+--- a/packages/agent-core-v2/test/app/sessionLegacy/sessionLegacy.test.ts
++++ b/packages/agent-core-v2/test/app/sessionLegacy/sessionLegacy.test.ts
+@@ -26,6 +26,8 @@ import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycl
+ import { IAgentActivityView } from '#/agent/activityView/activityView';
+ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+ import { ISessionCronService } from '#/session/cron/sessionCronService';
++import { ISessionContext } from '#/session/sessionContext/sessionContext';
++import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+ 
+ function accessor(
+   entries: ReadonlyArray<readonly [ServiceIdentifier<unknown>, unknown]>,
+@@ -118,3 +120,57 @@ describe('Session legacy status (best-effort runtime state)', () => {
+     });
+   });
+ });
++
++describe('Session legacy profile updates', () => {
++  it('applies the public system_prompt and tools agent_config fields', async () => {
++    const updates: unknown[] = [];
++    const profile = {
++      _serviceBrand: undefined,
++      update: (changed: unknown) => updates.push(changed),
++    } as unknown as IAgentProfileService;
++    const agent: IAgentScopeHandle = {
++      id: 'main',
++      kind: LifecycleScope.Agent,
++      accessor: accessor([[IAgentProfileService, profile]]),
++      dispose: () => {},
++    };
++    const meta = {
++      id: 'session-test',
++      title: 'Session',
++      createdAt: 1,
++      updatedAt: 1,
++      archived: false,
++    };
++    const session: ISessionScopeHandle = {
++      id: 'session-test',
++      kind: LifecycleScope.Session,
++      accessor: accessor([
++        [IAgentLifecycleService, { create: () => Promise.resolve(agent) }],
++        [ISessionMetadata, { read: () => Promise.resolve(meta) }],
++        [
++          ISessionContext,
++          { workspaceId: 'workspace-test', cwd: '/workspace' },
++        ],
++      ]),
++      dispose: () => {},
++    };
++    const lifecycle = {
++      resume: () => Promise.resolve(session),
++    } as unknown as ISessionLifecycleService;
++    const service = new SessionLegacyService(lifecycle);
++
++    await service.updateProfile('session-test', {
++      agent_config: {
++        system_prompt: 'Lean harness prompt',
++        tools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash'],
++      },
++    });
++
++    expect(updates).toEqual([
++      {
++        systemPrompt: 'Lean harness prompt',
++        activeToolNames: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash'],
++      },
++    ]);
++  });
++});
+diff --git a/packages/kap-server/src/routes/sessions.ts b/packages/kap-server/src/routes/sessions.ts
+index e47a0f76..23ca2af8 100644
+--- a/packages/kap-server/src/routes/sessions.ts
++++ b/packages/kap-server/src/routes/sessions.ts
+@@ -318,6 +318,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
+         if (typeof body.title === 'string') {
+           await handle.accessor.get(ISessionMetadata).setTitle(body.title);
+         }
++        if (body.agent_config !== undefined) {
++          await core.accessor.get(ISessionLegacyService).updateProfile(handle.id, {
++            agent_config: body.agent_config,
++          });
++        }
+         const meta = await handle.accessor.get(ISessionMetadata).read();
+         const session = toWireSession(
+           { ...meta, workspaceId: touched.id },
+diff --git a/packages/kap-server/test/sessions.test.ts b/packages/kap-server/test/sessions.test.ts
+index 2447ea61..12e20918 100644
+--- a/packages/kap-server/test/sessions.test.ts
++++ b/packages/kap-server/test/sessions.test.ts
+@@ -17,6 +17,8 @@ import {
+   type DomainEvent,
+   IAgentGoalService,
+   IAgentLifecycleService,
++  IAgentPermissionModeService,
++  IAgentProfileService,
+   IEventBus,
+   IEventService,
+   ISessionLifecycleService,
+@@ -286,6 +288,34 @@ describe('server-v2 /api/v1/sessions', () => {
+     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
+   });
+ 
++  it('applies agent_config while creating a session', async () => {
++    const cwd = home as string;
++    const { body } = await postJson<SessionWire>('/api/v1/sessions', {
++      metadata: { cwd },
++      agent_config: {
++        system_prompt: 'minimal harness prompt',
++        tools: ['Read', 'Bash'],
++        permission_mode: 'yolo',
++      },
++    });
++
++    const session = (server as RunningServer).core.accessor
++      .get(ISessionLifecycleService)
++      .get(body.data.id);
++    if (session === undefined) throw new Error('expected a live session');
++    const agent = session.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
++    if (agent === undefined) throw new Error('expected a live main agent');
++
++    expect(agent.accessor.get(IAgentProfileService).getSystemPrompt()).toBe(
++      'minimal harness prompt',
++    );
++    expect(agent.accessor.get(IAgentProfileService).getActiveToolNames()).toEqual([
++      'Read',
++      'Bash',
++    ]);
++    expect(agent.accessor.get(IAgentPermissionModeService).mode).toBe('yolo');
++  });
++
+   it('rejects create without cwd or workspace_id (40001)', async () => {
+     const { body } = await postJson<null>('/api/v1/sessions', { title: 'no cwd' });
+     expect(body.code).toBe(40001);

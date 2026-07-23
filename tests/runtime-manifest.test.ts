@@ -9,7 +9,7 @@ import { parseRuntimeManifest, readAndVerifyRuntimeManifest } from '../src/main/
 function fixture(sha256 = 'a'.repeat(64)): Record<string, unknown> {
   return {
     schemaVersion: 1,
-    channel: 'official',
+    channel: 'current',
     kind: 'official',
     version: '0.27.0',
     upstreamVersion: '0.27.0',

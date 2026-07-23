@@ -1,4 +1,4 @@
-name: Sync Kimi Code runtime
+name: Audit Kimi Code upstream
 
 on:
   schedule:
@@ -6,75 +6,41 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
+  issues: write
 
 concurrency:
-  group: runtime-sync
+  group: runtime-upstream-audit
   cancel-in-progress: false
 
 jobs:
-  sync:
-    name: Check upstream runtime
+  audit:
+    name: Detect upstream changes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Check upstream version without modifying Farside
+        id: upstream
+        run: node scripts/check-kimi-upstream.mjs
 
-      - name: Update official runtime lock
-        id: runtime
-        run: node scripts/sync-kimi-runtime.mjs --write
-
-      - name: Verify update
-        if: steps.runtime.outputs.updated == 'true'
-        env:
-          FARSIDE_DOWNLOAD_KIMI_RUNTIME: '1'
-          FARSIDE_RUNTIME_CHANNEL: 'official'
-        run: |
-          npm test
-          npm run typecheck
-          npm run build
-          npm run runtime:prepare
-          npm run runtime:smoke
-
-      - name: Open or update pull request
-        if: steps.runtime.outputs.updated == 'true'
+      - name: Open adaptation audit issue
+        if: steps.upstream.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RUNTIME_VERSION: ${{ steps.runtime.outputs.version }}
+          TITLE: "runtime: 审查 Kimi Code ${{ steps.upstream.outputs.upstream_version }} 适配"
         shell: bash
         run: |
           set -euo pipefail
-          branch="runtime/kimi-${RUNTIME_VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --heads origin "$branch"; then
-            git fetch origin "$branch:refs/remotes/origin/$branch"
-          fi
-          git checkout -B "$branch"
-          git add runtime.lock.json
-          git commit -m "chore(runtime): sync Kimi Code ${RUNTIME_VERSION}"
-          git push --force-with-lease origin "$branch"
-          existing="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url // empty')"
+          existing="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == env.TITLE) | .number' | head -n 1)"
           if [ -z "$existing" ]; then
-            gh pr create \
-              --base main \
-              --head "$branch" \
-              --title "chore(runtime): 同步 Kimi Code ${RUNTIME_VERSION}" \
-              --body "自动更新官方 Runtime 锁文件。合并前需等待 CI，并按 RUNTIME.md 完成协议差异与真实账号回归。"
+            gh issue create --title "$TITLE" --body-file .tmp/kimi-upstream-audit.md
           else
-            echo "已更新 $existing"
+            echo "适配审查事项 #${existing} 已存在"
           fi
-          gh workflow run ci.yml --ref "$branch"

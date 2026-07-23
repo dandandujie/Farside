@@ -13,7 +13,7 @@ export interface KimiRuntime {
 
 const verifiedRuntimes = new Map<string, Promise<RuntimeManifest>>()
 
-interface EmbeddedRuntimeChannel {
+interface EmbeddedRuntime {
   enabled: boolean
   kind: 'official' | 'custom'
   version: string
@@ -30,27 +30,28 @@ interface EmbeddedRuntimeChannel {
 
 const embeddedRuntimeLock = runtimeLock as unknown as {
   schemaVersion: number
-  channels: Record<string, EmbeddedRuntimeChannel | undefined>
+  runtime: EmbeddedRuntime
 }
-if (embeddedRuntimeLock.schemaVersion !== 1) throw new Error('应用内嵌 runtime lock schema 不受支持')
-const embeddedChannels = embeddedRuntimeLock.channels
+if (embeddedRuntimeLock.schemaVersion !== 2) throw new Error('应用内嵌 runtime lock schema 不受支持')
+const embeddedRuntime = embeddedRuntimeLock.runtime
 
 function assertManifestMatchesEmbeddedLock(manifest: RuntimeManifest): void {
-  const channel = embeddedChannels[manifest.channel]
-  if (!channel?.enabled) throw new Error(`随包 runtime 通道 ${manifest.channel} 未在应用锁文件中启用`)
+  if (manifest.channel !== 'current' || !embeddedRuntime.enabled) {
+    throw new Error('随包 runtime 不是 Farside 唯一的 current 运行时')
+  }
   if (
-    manifest.kind !== channel.kind ||
-    manifest.version !== channel.version ||
-    manifest.upstreamVersion !== channel.upstreamVersion ||
-    manifest.apiVersion !== channel.apiVersion ||
-    manifest.wsProtocolVersion !== channel.wsProtocolVersion ||
-    manifest.source !== channel.source.repository ||
-    manifest.revision !== channel.source.revision ||
-    manifest.manifestUrl !== channel.source.manifestUrl
+    manifest.kind !== embeddedRuntime.kind ||
+    manifest.version !== embeddedRuntime.version ||
+    manifest.upstreamVersion !== embeddedRuntime.upstreamVersion ||
+    manifest.apiVersion !== embeddedRuntime.apiVersion ||
+    manifest.wsProtocolVersion !== embeddedRuntime.wsProtocolVersion ||
+    manifest.source !== embeddedRuntime.source.repository ||
+    manifest.revision !== embeddedRuntime.source.revision ||
+    manifest.manifestUrl !== embeddedRuntime.source.manifestUrl
   ) {
     throw new Error('随包 runtime manifest 与应用内嵌锁文件不一致')
   }
-  const artifact = channel.artifacts[manifest.target]
+  const artifact = embeddedRuntime.artifacts[manifest.target]
   if (!artifact) throw new Error(`应用锁文件缺少 ${manifest.target} runtime`)
   if (manifest.provenance !== 'local-copy') {
     if (

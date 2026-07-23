@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 
-export const RUNTIME_LOCK_SCHEMA_VERSION = 1
+export const RUNTIME_LOCK_SCHEMA_VERSION = 2
+export const RUNTIME_CHANNEL_NAME = 'current'
 export const RUNTIME_TARGETS = Object.freeze([
   'darwin-arm64',
   'darwin-x64',
@@ -61,40 +62,38 @@ function validateArtifact(value, target, label) {
   return artifact
 }
 
-function validateChannel(value, name) {
-  const channel = record(value, `channels.${name}`)
-  if (typeof channel.enabled !== 'boolean') throw new Error(`channels.${name}.enabled 必须是布尔值`)
-  if (channel.kind !== 'official' && channel.kind !== 'custom') {
-    throw new Error(`channels.${name}.kind 必须是 official 或 custom`)
+function validateRuntime(value) {
+  const runtime = record(value, 'runtime')
+  if (runtime.enabled !== true) throw new Error('唯一 runtime 必须启用')
+  if (runtime.kind !== 'official' && runtime.kind !== 'custom') {
+    throw new Error('runtime.kind 必须是 official 或 custom')
   }
   for (const field of ['version', 'upstreamVersion']) {
-    if (typeof channel[field] !== 'string' || channel[field].length > 128 || !VERSION_PATTERN.test(channel[field])) {
-      throw new Error(`channels.${name}.${field} 不是有效版本号`)
+    if (typeof runtime[field] !== 'string' || runtime[field].length > 128 || !VERSION_PATTERN.test(runtime[field])) {
+      throw new Error(`runtime.${field} 不是有效版本号`)
     }
   }
-  if (channel.apiVersion !== 1) throw new Error(`channels.${name}.apiVersion 暂只支持 1`)
-  if (channel.wsProtocolVersion !== 2) throw new Error(`channels.${name}.wsProtocolVersion 暂只支持 2`)
+  if (runtime.apiVersion !== 1) throw new Error('runtime.apiVersion 暂只支持 1')
+  if (runtime.wsProtocolVersion !== 2) throw new Error('runtime.wsProtocolVersion 暂只支持 2')
 
-  const source = record(channel.source, `channels.${name}.source`)
-  secureUrl(source.repository, `channels.${name}.source.repository`)
-  if (source.revision !== null) nonEmptyString(source.revision, `channels.${name}.source.revision`)
-  nonEmptyString(source.license, `channels.${name}.source.license`, 64)
-  secureUrl(source.manifestUrl, `channels.${name}.source.manifestUrl`, true)
+  const source = record(runtime.source, 'runtime.source')
+  secureUrl(source.repository, 'runtime.source.repository')
+  if (source.revision !== null) nonEmptyString(source.revision, 'runtime.source.revision')
+  nonEmptyString(source.license, 'runtime.source.license', 64)
+  secureUrl(source.manifestUrl, 'runtime.source.manifestUrl', true)
 
-  const artifacts = record(channel.artifacts, `channels.${name}.artifacts`)
+  const artifacts = record(runtime.artifacts, 'runtime.artifacts')
   const artifactTargets = Object.keys(artifacts)
   for (const target of artifactTargets) {
-    if (!RUNTIME_TARGETS.includes(target)) throw new Error(`channels.${name}.artifacts 包含未知目标 ${target}`)
-    validateArtifact(artifacts[target], target, `channels.${name}.artifacts.${target}`)
+    if (!RUNTIME_TARGETS.includes(target)) throw new Error(`runtime.artifacts 包含未知目标 ${target}`)
+    validateArtifact(artifacts[target], target, `runtime.artifacts.${target}`)
   }
-  if (channel.enabled) {
-    const missing = RUNTIME_TARGETS.filter((target) => !artifactTargets.includes(target))
-    if (missing.length) throw new Error(`已启用通道 ${name} 缺少目标：${missing.join(', ')}`)
-    if (source.revision === null || source.manifestUrl === null) {
-      throw new Error(`已启用通道 ${name} 必须固定 revision 和 manifestUrl`)
-    }
+  const missing = RUNTIME_TARGETS.filter((target) => !artifactTargets.includes(target))
+  if (missing.length) throw new Error(`唯一 runtime 缺少目标：${missing.join(', ')}`)
+  if (source.revision === null || source.manifestUrl === null) {
+    throw new Error('唯一 runtime 必须固定 revision 和 manifestUrl')
   }
-  return channel
+  return runtime
 }
 
 export function validateRuntimeLock(value) {
@@ -102,14 +101,10 @@ export function validateRuntimeLock(value) {
   if (lock.schemaVersion !== RUNTIME_LOCK_SCHEMA_VERSION) {
     throw new Error(`不支持的 runtime lock schema：${String(lock.schemaVersion)}`)
   }
-  const defaultChannel = nonEmptyString(lock.defaultChannel, 'defaultChannel', 64)
-  const channels = record(lock.channels, 'channels')
-  if (!Object.keys(channels).length) throw new Error('runtime lock 至少需要一个通道')
-  for (const [name, channel] of Object.entries(channels)) {
-    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) throw new Error(`无效的运行时通道名：${name}`)
-    validateChannel(channel, name)
+  validateRuntime(lock.runtime)
+  if ('channels' in lock || 'defaultChannel' in lock) {
+    throw new Error('runtime lock 不再支持平行通道字段')
   }
-  if (!channels[defaultChannel]?.enabled) throw new Error(`默认运行时通道 ${defaultChannel} 不存在或未启用`)
   return lock
 }
 
@@ -123,12 +118,8 @@ export async function loadRuntimeLock(path = resolve(process.cwd(), 'runtime.loc
   return validateRuntimeLock(parsed)
 }
 
-export function selectRuntimeChannel(lock, requested) {
-  const name = requested?.trim() || lock.defaultChannel
-  const channel = lock.channels[name]
-  if (!channel) throw new Error(`未知的运行时通道：${name}`)
-  if (!channel.enabled) throw new Error(`运行时通道 ${name} 尚未发布完整的六平台产物，不能启用`)
-  return { name, channel }
+export function getCurrentRuntime(lock) {
+  return { name: RUNTIME_CHANNEL_NAME, runtime: lock.runtime }
 }
 
 export function selectRuntimeArtifact(channel, target) {

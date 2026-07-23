@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import {
   RUNTIME_TARGETS,
-  selectRuntimeChannel,
+  getCurrentRuntime,
   validateRuntimeLock,
   versionOutputMatches
 } from '../scripts/runtime-lock.mjs'
@@ -14,30 +14,31 @@ function copyLock() {
   return structuredClone(source)
 }
 
-test('默认 runtime 通道完整锁定六个平台', () => {
+test('唯一 current runtime 完整锁定六个平台', () => {
   const lock = validateRuntimeLock(copyLock())
-  const { name, channel } = selectRuntimeChannel(lock)
-  assert.equal(name, 'official')
-  assert.equal(channel.version, '0.27.0')
-  assert.deepEqual(Object.keys(channel.artifacts).sort(), [...RUNTIME_TARGETS].sort())
+  const { name, runtime } = getCurrentRuntime(lock)
+  assert.equal(name, 'current')
+  assert.equal(runtime.version, '0.27.0')
+  assert.deepEqual(Object.keys(runtime.artifacts).sort(), [...RUNTIME_TARGETS].sort())
 })
 
-test('未发布完整产物的自定义通道不能被选择', () => {
-  const lock = validateRuntimeLock(copyLock())
-  assert.throws(() => selectRuntimeChannel(lock, 'farside'), /尚未发布完整的六平台产物/)
+test('拒绝重新引入平行 runtime 通道或运行时切换', () => {
+  const extra = copyLock()
+  extra.channels = { official: structuredClone(extra.runtime) }
+  assert.throws(() => validateRuntimeLock(extra), /不再支持平行通道/)
 })
 
-test('启用通道拒绝缺失平台、不安全 URL 与伪造校验值', () => {
+test('唯一 runtime 拒绝缺失平台、不安全 URL 与伪造校验值', () => {
   const missing = copyLock()
-  delete missing.channels.official.artifacts['linux-arm64']
+  delete missing.runtime.artifacts['linux-arm64']
   assert.throws(() => validateRuntimeLock(missing), /缺少目标/)
 
   const insecure = copyLock()
-  insecure.channels.official.artifacts['linux-arm64'].url = 'http://example.com/kimi-code-linux-arm64'
+  insecure.runtime.artifacts['linux-arm64'].url = 'http://example.com/kimi-code-linux-arm64'
   assert.throws(() => validateRuntimeLock(insecure), /HTTPS URL/)
 
   const invalidHash = copyLock()
-  invalidHash.channels.official.artifacts['linux-arm64'].sha256 = '0'.repeat(63)
+  invalidHash.runtime.artifacts['linux-arm64'].sha256 = '0'.repeat(63)
   assert.throws(() => validateRuntimeLock(invalidHash), /SHA-256/)
 })
 

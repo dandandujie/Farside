@@ -1,67 +1,49 @@
 {
-  "schemaVersion": 1,
-  "defaultChannel": "official",
-  "channels": {
-    "official": {
-      "enabled": true,
-      "kind": "official",
-      "version": "0.27.0",
-      "upstreamVersion": "0.27.0",
-      "apiVersion": 1,
-      "wsProtocolVersion": 2,
-      "source": {
-        "repository": "https://github.com/MoonshotAI/kimi-code",
-        "revision": "@moonshot-ai/kimi-code@0.27.0",
-        "license": "MIT",
-        "manifestUrl": "https://code.kimi.com/kimi-code/binaries/0.27.0/manifest.json"
-      },
-      "artifacts": {
-        "darwin-arm64": {
-          "filename": "kimi-code-darwin-arm64",
-          "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-darwin-arm64",
-          "sha256": "550bca0ba6e474f4e0faeadfae03a9294c7c25688670f38ff488ab8cf176d817"
-        },
-        "darwin-x64": {
-          "filename": "kimi-code-darwin-x64",
-          "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-darwin-x64",
-          "sha256": "11a010fedfa361894f66f13c8a39ee3afdf7af409f726055f24c55e4a4876f91"
-        },
-        "linux-arm64": {
-          "filename": "kimi-code-linux-arm64",
-          "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-linux-arm64",
-          "sha256": "4766a5ea33beb1b2066dd9712c7f02c6e91b510c4ca1d117f31a2f89c2dfa024"
-        },
-        "linux-x64": {
-          "filename": "kimi-code-linux-x64",
-          "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-linux-x64",
-          "sha256": "eecbab45bc1b992b648c46387a0972c340fac7d8b2549616f1eacec90e595a31"
-        },
-        "win32-arm64": {
-          "filename": "kimi-code-win32-arm64.exe",
-          "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-win32-arm64.exe",
-          "sha256": "7dc5cdbc47710d32e52c42c92b0592507594bdb8a5c17867f3f538a72e75d961"
-        },
-        "win32-x64": {
-          "filename": "kimi-code-win32-x64.exe",
-          "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-win32-x64.exe",
-          "sha256": "1c3d981d2e0437ada925a153047b54922ada01d0f85282cff49f3a56df46f50a"
-        }
-      }
+  "schemaVersion": 2,
+  "runtime": {
+    "enabled": true,
+    "kind": "official",
+    "version": "0.27.0",
+    "upstreamVersion": "0.27.0",
+    "apiVersion": 1,
+    "wsProtocolVersion": 2,
+    "source": {
+      "repository": "https://github.com/MoonshotAI/kimi-code",
+      "revision": "@moonshot-ai/kimi-code@0.27.0",
+      "license": "MIT",
+      "manifestUrl": "https://code.kimi.com/kimi-code/binaries/0.27.0/manifest.json"
     },
-    "farside": {
-      "enabled": false,
-      "kind": "custom",
-      "version": "0.27.0-farside.1",
-      "upstreamVersion": "0.27.0",
-      "apiVersion": 1,
-      "wsProtocolVersion": 2,
-      "source": {
-        "repository": "https://github.com/dandandujie/farside-runtime",
-        "revision": null,
-        "license": "MIT",
-        "manifestUrl": null
+    "artifacts": {
+      "darwin-arm64": {
+        "filename": "kimi-code-darwin-arm64",
+        "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-darwin-arm64",
+        "sha256": "550bca0ba6e474f4e0faeadfae03a9294c7c25688670f38ff488ab8cf176d817"
       },
-      "artifacts": {}
+      "darwin-x64": {
+        "filename": "kimi-code-darwin-x64",
+        "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-darwin-x64",
+        "sha256": "11a010fedfa361894f66f13c8a39ee3afdf7af409f726055f24c55e4a4876f91"
+      },
+      "linux-arm64": {
+        "filename": "kimi-code-linux-arm64",
+        "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-linux-arm64",
+        "sha256": "4766a5ea33beb1b2066dd9712c7f02c6e91b510c4ca1d117f31a2f89c2dfa024"
+      },
+      "linux-x64": {
+        "filename": "kimi-code-linux-x64",
+        "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-linux-x64",
+        "sha256": "eecbab45bc1b992b648c46387a0972c340fac7d8b2549616f1eacec90e595a31"
+      },
+      "win32-arm64": {
+        "filename": "kimi-code-win32-arm64.exe",
+        "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-win32-arm64.exe",
+        "sha256": "7dc5cdbc47710d32e52c42c92b0592507594bdb8a5c17867f3f538a72e75d961"
+      },
+      "win32-x64": {
+        "filename": "kimi-code-win32-x64.exe",
+        "url": "https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-win32-x64.exe",
+        "sha256": "1c3d981d2e0437ada925a153047b54922ada01d0f85282cff49f3a56df46f50a"
+      }
     }
   }
 }

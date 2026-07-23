@@ -12,6 +12,7 @@ resources/runtime/*/manifest.json
 /config.toml
 /mcp.json
 /AGENTS.md
+!AGENTS.md
 /server.token
 .kimi/
 .kimi-code/

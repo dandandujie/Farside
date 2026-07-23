@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
@@ -28,6 +28,29 @@ function run(args, env, timeout = 20_000) {
       resolveRun((stdout || stderr).trim())
     })
   })
+}
+
+function versionAtLeast(version, minimum) {
+  const matched = version.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/)
+  if (!matched) return false
+  const actual = matched.slice(1, 4).map(Number)
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] !== minimum[index]) return actual[index] > minimum[index]
+  }
+  return true
+}
+
+function startForeground(args, env) {
+  const child = spawn(command, args, {
+    env,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  let output = ''
+  const append = (chunk) => { output = `${output}${chunk}`.slice(-4_096) }
+  child.stdout.on('data', append)
+  child.stderr.on('data', append)
+  return { child, output: () => output }
 }
 
 async function availablePort() {
@@ -119,10 +142,16 @@ const origin = `http://127.0.0.1:${port}`
 const env = { ...process.env, KIMI_CODE_HOME: home }
 let attemptedStart = false
 let smokeFailed = false
+let foreground
+const foregroundWeb = versionAtLeast(manifest.version, [0, 28, 0])
 
 try {
   attemptedStart = true
-  await run(['server', 'run', '--port', String(port)], env)
+  if (foregroundWeb) {
+    foreground = startForeground(['web', '--no-open', '--port', String(port)], env)
+  } else {
+    await run(['server', 'run', '--port', String(port)], env)
+  }
   const deadline = Date.now() + 15_000
   let meta = null
   while (Date.now() < deadline) {
@@ -131,6 +160,9 @@ try {
       if (token) meta = await probeMeta(origin, token)
     } catch {}
     if (meta) break
+    if (foreground?.child.exitCode !== null) {
+      throw new Error(`Kimi web 提前退出（${foreground.child.exitCode}）：${foreground.output()}`)
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 250))
   }
   if (!meta) throw new Error('Kimi Server meta smoke test 超时')
@@ -148,7 +180,16 @@ try {
   let cleanupError
   if (attemptedStart) {
     try {
-      await run(['server', 'kill'], env, 10_000)
+      if (foreground?.child.exitCode === null) {
+        const exited = new Promise((resolveExit) => foreground.child.once('exit', resolveExit))
+        foreground.child.kill()
+        await Promise.race([
+          exited,
+          new Promise((resolveWait) => setTimeout(resolveWait, 5_000))
+        ])
+      } else if (!foregroundWeb) {
+        await run(['server', 'kill'], env, 10_000)
+      }
     } catch (error) {
       cleanupError = error
     }

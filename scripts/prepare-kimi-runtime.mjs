@@ -5,8 +5,8 @@ import { homedir } from 'node:os'
 import { basename, delimiter, join, resolve } from 'node:path'
 import {
   loadRuntimeLock,
+  getCurrentRuntime,
   selectRuntimeArtifact,
-  selectRuntimeChannel,
   versionOutputMatches
 } from './runtime-lock.mjs'
 
@@ -14,8 +14,8 @@ const MAX_RUNTIME_BYTES = 300 * 1024 * 1024
 const target = `${process.platform}-${process.arch}`
 const executable = process.platform === 'win32' ? 'kimi.exe' : 'kimi'
 const lock = await loadRuntimeLock()
-const { name: channelName, channel } = selectRuntimeChannel(lock, process.env.FARSIDE_RUNTIME_CHANNEL)
-const artifact = selectRuntimeArtifact(channel, target)
+const { name: runtimeName, runtime } = getCurrentRuntime(lock)
+const artifact = selectRuntimeArtifact(runtime, target)
 const downloadLockedRuntime = process.env.FARSIDE_DOWNLOAD_KIMI_RUNTIME === '1'
 
 async function readBoundedResponse(response, maxBytes) {
@@ -46,8 +46,8 @@ function assertRuntimeVersion(command) {
     windowsHide: true,
     timeout: 15_000
   }).trim()
-  if (!versionOutputMatches(output, channel.version)) {
-    throw new Error(`运行时版本不匹配：通道 ${channelName} 固定 ${channel.version}，实际为 ${output || '空输出'}`)
+  if (!versionOutputMatches(output, runtime.version)) {
+    throw new Error(`运行时版本不匹配：current 固定 ${runtime.version}，实际为 ${output || '空输出'}`)
   }
   return output
 }
@@ -97,7 +97,7 @@ if (downloadLockedRuntime) {
   if (bytes.byteLength > MAX_RUNTIME_BYTES) throw new Error('Kimi Code runtime 体积异常')
   provenance = createHash('sha256').update(bytes).digest('hex') === artifact.sha256 ? 'locked-copy' : 'local-copy'
 } else {
-  throw new Error('未找到 Kimi Code runtime。请先运行官方安装器、通过 FARSIDE_KIMI_BINARY 指定可执行程序，或设置 FARSIDE_DOWNLOAD_KIMI_RUNTIME=1 下载锁定产物。')
+  throw new Error('未找到 Farside current runtime。请通过 FARSIDE_KIMI_BINARY 指定同版本源码构建产物，或设置 FARSIDE_DOWNLOAD_KIMI_RUNTIME=1 下载唯一锁定产物。')
 }
 
 const sha256 = createHash('sha256').update(bytes).digest('hex')
@@ -116,20 +116,20 @@ try {
   await writeFile(join(directory, 'manifest.json'), `${JSON.stringify({
     schemaVersion: 1,
     name: 'Kimi Code CLI',
-    channel: channelName,
-    kind: channel.kind,
-    version: channel.version,
-    upstreamVersion: channel.upstreamVersion,
-    apiVersion: channel.apiVersion,
-    wsProtocolVersion: channel.wsProtocolVersion,
+    channel: runtimeName,
+    kind: runtime.kind,
+    version: runtime.version,
+    upstreamVersion: runtime.upstreamVersion,
+    apiVersion: runtime.apiVersion,
+    wsProtocolVersion: runtime.wsProtocolVersion,
     observedVersion,
     target,
     executable: basename(destination),
     sha256,
     lockedSha256: provenance === 'local-copy' ? null : artifact.sha256,
-    source: channel.source.repository,
-    revision: channel.source.revision,
-    manifestUrl: channel.source.manifestUrl,
+    source: runtime.source.repository,
+    revision: runtime.source.revision,
+    manifestUrl: runtime.source.manifestUrl,
     artifactUrl: provenance === 'local-copy' ? null : artifact.url,
     provenance
   }, null, 2)}\n`)
@@ -137,5 +137,5 @@ try {
   await unlink(staging).catch(() => {})
 }
 
-console.log(`Kimi Code ${channel.version} (${channelName}) -> ${destination}`)
+console.log(`Kimi Code ${runtime.version} (${runtimeName}) -> ${destination}`)
 console.log(`sha256 ${sha256}`)

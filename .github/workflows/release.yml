@@ -52,7 +52,6 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           FARSIDE_DOWNLOAD_KIMI_RUNTIME: '1'
-          FARSIDE_RUNTIME_CHANNEL: 'official'
         run: npm run dist -- --${{ matrix.target }} --publish never
 
       - name: Upload installer
