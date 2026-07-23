@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useFarsideStore, useActiveSession, type RailView } from '../../lib/store'
 import { CrescentLogo } from '../../design-system/CrescentLogo'
 import { MoonPhase } from '../../design-system/MoonPhase'
@@ -57,6 +58,11 @@ export function Titlebar() {
   const { locale, t } = usePreferences()
   const active = useActiveSession()
   const view = useFarsideStore((s) => s.view)
+  const [isMac, setIsMac] = useState(false)
+
+  useEffect(() => {
+    void window.api?.getAppInfo().then((info) => setIsMac(info.platform === 'darwin'))
+  }, [])
 
   return (
     <header
@@ -69,7 +75,8 @@ export function Titlebar() {
         justifyContent: 'space-between',
         background: 'var(--void)',
         borderBottom: '1px solid var(--line)',
-        paddingLeft: 12
+        // macOS hiddenInset 的红绿灯占左侧约 78px，内容右移避让
+        paddingLeft: isMac ? 82 : 12
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>

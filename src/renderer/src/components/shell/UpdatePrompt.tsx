@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AppUpdateInfo } from '@shared/ipc'
 import { CrescentLogo } from '../../design-system/CrescentLogo'
 import { PrismLine } from '../../design-system/PrismLine'
 import { usePreferences } from '../../lib/preferences'
+import { useFarsideStore } from '../../lib/store'
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000
 
@@ -57,36 +58,27 @@ interface UpdatePromptProps {
 export function UpdatePrompt({ enabled }: UpdatePromptProps) {
   const { locale } = usePreferences()
   const english = locale === 'en-US'
-  const [update, setUpdate] = useState<AppUpdateInfo | null>(null)
+  const updateInfo = useFarsideStore((s) => s.updateInfo)
+  const checkUpdates = useFarsideStore((s) => s.checkUpdates)
+  const dismissUpdate = useFarsideStore((s) => s.dismissUpdate)
   const [opening, setOpening] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [downloaded, setDownloaded] = useState(false)
   const [progress, setProgress] = useState<{ received: number; total: number } | null>(null)
   const [openError, setOpenError] = useState<string | null>(null)
-  const dismissedVersion = useRef<string | null>(null)
   const primaryButton = useRef<HTMLButtonElement | null>(null)
   const shot = new URLSearchParams(window.location.search).get('shot')
-
-  const check = useCallback(async () => {
-    if (shot === 'update') {
-      setUpdate(MOCK_UPDATE)
-      return
-    }
-    const result = await window.api?.update.check().catch(() => null)
-    if (result?.updateAvailable && result.latestVersion !== dismissedVersion.current) {
-      setUpdate(result)
-    }
-  }, [shot])
+  const update = shot === 'update' ? MOCK_UPDATE : updateInfo
 
   useEffect(() => {
-    if (!enabled) return
-    const startup = window.setTimeout(() => void check(), shot === 'update' ? 0 : 1_500)
-    const interval = window.setInterval(() => void check(), CHECK_INTERVAL_MS)
+    if (!enabled || shot === 'update') return
+    const startup = window.setTimeout(() => void checkUpdates(), 1_500)
+    const interval = window.setInterval(() => void checkUpdates(), CHECK_INTERVAL_MS)
     return () => {
       window.clearTimeout(startup)
       window.clearInterval(interval)
     }
-  }, [check, enabled, shot])
+  }, [checkUpdates, enabled, shot])
 
   useEffect(() => {
     if (shot === 'update') return
@@ -100,12 +92,11 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopImmediatePropagation()
-      dismissedVersion.current = update.latestVersion ?? null
-      setUpdate(null)
+      dismissUpdate()
     }
     document.addEventListener('keydown', onKeyDown, true)
     return () => document.removeEventListener('keydown', onKeyDown, true)
-  }, [update])
+  }, [update, dismissUpdate])
 
   const highlights = useMemo(
     () => releaseHighlights(update?.releaseNotes, english),
@@ -121,15 +112,14 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
   if (!enabled || !update) return null
 
   const dismiss = () => {
-    dismissedVersion.current = update.latestVersion ?? null
-    setUpdate(null)
+    dismissUpdate()
   }
   const openUpdate = async () => {
     if (shot === 'update') return
     setOpening(true)
     setOpenError(null)
     const result = await window.api?.update.open().catch(() => ({ ok: false, error: undefined }))
-    if (result?.ok) setUpdate(null)
+    if (result?.ok) dismissUpdate()
     else setOpenError(result?.error ?? (english ? 'Unable to open the update.' : '无法打开更新地址。'))
     setOpening(false)
   }

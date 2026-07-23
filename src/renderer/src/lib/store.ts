@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AccountConfigureInput, AgentUpdate, WorkspaceInfo } from '@shared/ipc'
+import type { AccountConfigureInput, AgentUpdate, AppUpdateInfo, WorkspaceInfo } from '@shared/ipc'
 import type {
   AccountState,
   ApprovalDecision,
@@ -114,6 +114,15 @@ interface FarsideState {
   booted: boolean
   setBooted(): void
   applyAgentUpdate(update: AgentUpdate): void
+
+  /** 待展示的可用更新；手动检查与定时轮询共用。 */
+  updateInfo: AppUpdateInfo | null
+  /** 手动检查的结果提示（已是最新 / 检查失败），由触发方就地展示。 */
+  updateNotice: { kind: 'latest' | 'failed'; version?: string } | null
+  dismissedUpdateVersion: string | null
+  checkUpdates(manual?: boolean): Promise<void>
+  dismissUpdate(): void
+  clearUpdateNotice(): void
 }
 
 interface SessionComposerState {
@@ -1177,6 +1186,33 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   quota: { weekUsedPct: 0, fiveHourUsedPct: 0, extraBalanceCny: null },
   booted: false,
   setBooted: () => set({ booted: true }),
+
+  updateInfo: null,
+  updateNotice: null,
+  dismissedUpdateVersion: null,
+  checkUpdates: async (manual = false) => {
+    const api = window.api?.update
+    if (!api || visualPreview) return
+    const result = await api.check().catch(() => null)
+    if (!result) {
+      if (manual) set({ updateNotice: { kind: 'failed' } })
+      return
+    }
+    if (result.updateAvailable) {
+      // 手动检查时即使用户之前点过“稍后提醒”也重新展示弹窗
+      if (manual || result.latestVersion !== get().dismissedUpdateVersion) {
+        set({ updateInfo: result, updateNotice: null })
+      }
+      return
+    }
+    if (manual) set({ updateNotice: { kind: 'latest', version: result.currentVersion } })
+  },
+  dismissUpdate: () =>
+    set((state) => ({
+      dismissedUpdateVersion: state.updateInfo?.latestVersion ?? state.dismissedUpdateVersion,
+      updateInfo: null
+    })),
+  clearUpdateNotice: () => set({ updateNotice: null }),
 
   applyAgentUpdate: (update) => {
     if (update.kind === 'connection') {

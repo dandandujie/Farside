@@ -355,7 +355,7 @@ function AboutPanel({ info }: { info: AppInfo | null }) {
 
 export function SettingsView() {
   const { t } = usePreferences()
-  const [section, setSection] = useState<SettingsSection>(() => new URLSearchParams(window.location.search).get('shot') === 'settings-light' ? 'general' : 'extensions')
+  const [section, setSection] = useState<SettingsSection>(() => new URLSearchParams(window.location.search).get('shot') === 'settings-light' ? 'general' : 'account')
   const [snapshot, setSnapshot] = useState<ConfigurationSnapshot>(EMPTY_SNAPSHOT)
   const [configError, setConfigError] = useState('')
   const [info, setInfo] = useState<AppInfo | null>(null)

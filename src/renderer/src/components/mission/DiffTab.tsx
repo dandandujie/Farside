@@ -165,6 +165,13 @@ export function DiffTab() {
       ),
     [changes]
   )
+  // 会话目录不是 git 仓库时服务端报 40908 + 原始 git 输出，换成可读说明。
+  const notAGitRepo = error !== null && /git unavailable|not a git repository/i.test(error)
+  const errorText = notAGitRepo
+    ? (english
+        ? `This session's folder is not a git repository${active?.cwd ? ` (${active.cwd})` : ''}, so there are no changes to show.`
+        : `当前会话目录不是 Git 仓库${active?.cwd ? `（${active.cwd}）` : ''}，没有可显示的改动。`)
+    : error
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -232,9 +239,9 @@ export function DiffTab() {
               </button>
             )
           })}
-          {error ? (
+          {errorText ? (
             <p style={{ margin: '6px 8px', fontSize: 11, color: 'var(--faint)', lineHeight: 1.6 }}>
-              {error}
+              {errorText}
             </p>
           ) : null}
           {!error && changesLoading && changes.length === 0 ? (

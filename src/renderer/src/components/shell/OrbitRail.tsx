@@ -73,7 +73,11 @@ export function OrbitRail() {
   const account = useFarsideStore((s) => s.account)
   const refreshAccount = useFarsideStore((s) => s.refreshAccount)
   const logoutAccount = useFarsideStore((s) => s.logoutAccount)
+  const checkUpdates = useFarsideStore((s) => s.checkUpdates)
+  const updateNotice = useFarsideStore((s) => s.updateNotice)
+  const clearUpdateNotice = useFarsideStore((s) => s.clearUpdateNotice)
   const [accountOpen, setAccountOpen] = useState(false)
+  const [updateChecking, setUpdateChecking] = useState(false)
   const accountPopoverRef = useRef<HTMLDivElement>(null)
   const provider = account?.providers.find((item) => item.active)
   const usage = account?.usage
@@ -170,7 +174,12 @@ export function OrbitRail() {
       ) : null}
       <div ref={accountPopoverRef} style={{ position: 'relative' }}>
         <button
-          onClick={() => setAccountOpen((value) => !value)}
+          onClick={() => {
+            setAccountOpen((value) => {
+              if (!value) clearUpdateNotice()
+              return !value
+            })
+          }}
           aria-label={t('账户')}
           title={t('账户与用量')}
           style={{
@@ -231,9 +240,31 @@ export function OrbitRail() {
             ) : null}
             <div style={{ display: 'flex', gap: 8, marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
               <button onClick={() => { setView('settings'); setAccountOpen(false) }} style={{ fontSize: 11.5, color: 'var(--dust)' }}>{t('账户设置')}</button>
+              <button
+                disabled={updateChecking}
+                onClick={() => {
+                  setUpdateChecking(true)
+                  void checkUpdates(true)
+                    .then(() => {
+                      // 有更新时收起账户弹窗，让更新弹窗完整露出
+                      if (useFarsideStore.getState().updateInfo) setAccountOpen(false)
+                    })
+                    .finally(() => setUpdateChecking(false))
+                }}
+                style={{ fontSize: 11.5, color: updateChecking ? 'var(--ghost)' : 'var(--dust)' }}
+              >
+                {updateChecking ? t('检查中…') : t('检查更新')}
+              </button>
               {account?.configured ? <button onClick={() => void refreshAccount()} style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--dust)' }}>{t('刷新')}</button> : null}
               {account?.configured ? <button onClick={() => { void logoutAccount(); setAccountOpen(false) }} style={{ fontSize: 11.5, color: 'var(--redshift)' }}>{t('退出')}</button> : null}
             </div>
+            {updateNotice ? (
+              <div style={{ marginTop: 8, fontSize: 10.5, color: updateNotice.kind === 'latest' ? 'var(--signal)' : 'var(--redshift)' }}>
+                {updateNotice.kind === 'latest'
+                  ? (locale === 'en-US' ? `Already on the latest version v${updateNotice.version}` : `当前已是最新版本 v${updateNotice.version}`)
+                  : t('检查更新失败，请稍后再试。')}
+              </div>
+            ) : null}
             {provider?.kind === 'kimi-oauth' ? <a href="https://www.kimi.com/membership/pricing?from=farside" target="_blank" rel="noreferrer" style={{ display: 'block', marginTop: 10, fontSize: 10.5, color: 'var(--faint)' }}>查看官方套餐与升级 ↗</a> : null}
           </div>
         ) : null}
