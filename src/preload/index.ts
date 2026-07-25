@@ -11,6 +11,7 @@ const api: FarsideApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.AppGetInfo),
   update: {
     check: () => ipcRenderer.invoke(IPC.AppCheckUpdate),
+    history: () => ipcRenderer.invoke(IPC.AppReleaseHistory),
     open: () => ipcRenderer.invoke(IPC.AppOpenUpdate),
     download: () => ipcRenderer.invoke(IPC.AppDownloadUpdate),
     onProgress: (cb) => {
@@ -55,6 +56,7 @@ const api: FarsideApi = {
     get: () => ipcRenderer.invoke(IPC.AccountGet),
     configure: (input) => ipcRenderer.invoke(IPC.AccountConfigure, input),
     refresh: () => ipcRenderer.invoke(IPC.AccountRefresh),
+    profile: () => ipcRenderer.invoke(IPC.AccountProfile),
     logout: () => ipcRenderer.invoke(IPC.AccountLogout)
   },
   workspace: {
@@ -69,6 +71,8 @@ const api: FarsideApi = {
     save: (input) => ipcRenderer.invoke(IPC.ConfigurationSave, input),
     open: (target) => ipcRenderer.invoke(IPC.ConfigurationOpen, target),
     manage: (input) => ipcRenderer.invoke(IPC.ConfigurationManage, input),
+    hooks: (root) => ipcRenderer.invoke(IPC.ConfigurationHooksGet, root),
+    saveHooks: (input) => ipcRenderer.invoke(IPC.ConfigurationHooksSave, input),
     onChanged: (cb) => {
       const listener = (_event: IpcRendererEvent, snapshot: ConfigurationSnapshot): void => cb(snapshot)
       ipcRenderer.on(IPC.ConfigurationChanged, listener)
@@ -76,6 +80,14 @@ const api: FarsideApi = {
         ipcRenderer.removeListener(IPC.ConfigurationChanged, listener)
       }
     }
+  },
+  connection: {
+    get: () => ipcRenderer.invoke(IPC.ConnectionGet),
+    save: (input) => ipcRenderer.invoke(IPC.ConnectionSave, input),
+    remove: (id) => ipcRenderer.invoke(IPC.ConnectionRemove, id),
+    test: (id) => ipcRenderer.invoke(IPC.ConnectionTest, id),
+    connect: (id) => ipcRenderer.invoke(IPC.ConnectionConnect, id),
+    disconnect: () => ipcRenderer.invoke(IPC.ConnectionDisconnect)
   },
   agent: {
     initialize: () => ipcRenderer.invoke(IPC.AgentInitialize),

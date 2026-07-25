@@ -417,7 +417,7 @@ function TurnGroup({
 
 /** 纵向任务轨道：按用户请求分 Turn，完成的 Turn 自动折叠，当前 Turn 保持展开。 */
 export function TrajectoryView({ session }: { session: Session }) {
-  const { t } = usePreferences()
+  const { t, locale } = usePreferences()
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
@@ -487,7 +487,13 @@ export function TrajectoryView({ session }: { session: Session }) {
             <div aria-hidden style={{ position: 'absolute', left: 0, top: 4, bottom: 4, width: 1, background: 'var(--line)' }} />
             {turns.map((turn, index) => {
               const isLastTurn = index === turns.length - 1
-              const completed = turn.hasUser && (!isLastTurn || session.phase === 'new')
+              const interrupted =
+                isLastTurn &&
+                session.phase === 'new' &&
+                session.lastOutcome != null &&
+                session.lastOutcome.status !== 'completed'
+              const completed =
+                turn.hasUser && (!isLastTurn || (session.phase === 'new' && !interrupted))
               return (
                 <TurnGroup
                   key={`${session.id}-${turn.id}`}
@@ -500,6 +506,34 @@ export function TrajectoryView({ session }: { session: Session }) {
                 />
               )
             })}
+            {session.phase === 'new' &&
+            session.lastOutcome &&
+            session.lastOutcome.status !== 'completed' ? (
+              <div
+                role="alert"
+                className="fade-in"
+                style={{
+                  marginTop: -10,
+                  padding: '11px 13px',
+                  border: '1px solid color-mix(in srgb, var(--redshift) 48%, var(--line))',
+                  borderRadius: 7,
+                  background: 'color-mix(in srgb, var(--redshift) 7%, var(--regolith))',
+                  color: 'var(--dust)',
+                  fontSize: 11.5,
+                  lineHeight: 1.65,
+                  whiteSpace: 'pre-wrap'
+                }}
+              >
+                <strong style={{ color: session.lastOutcome.status === 'aborted' ? 'var(--flare)' : 'var(--redshift)', fontWeight: 500 }}>
+                  {session.lastOutcome.status === 'aborted'
+                    ? (locale === 'en-US' ? 'Request aborted' : '请求已取消')
+                    : session.lastOutcome.status === 'unconfirmed'
+                      ? (locale === 'en-US' ? 'Completion not confirmed' : '完成状态未确认')
+                      : (locale === 'en-US' ? 'Execution interrupted' : '执行中断')}
+                </strong>
+                {session.lastOutcome.message ? `\n${session.lastOutcome.message}` : null}
+              </div>
+            ) : null}
           </div>
         )}
       </div>

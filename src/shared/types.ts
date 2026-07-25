@@ -142,6 +142,13 @@ export type TrajectoryEvent =
   | TelemetryEvent
 
 // ── 会话 ──────────────────────────────────────────────────────────
+export interface RunOutcome {
+  status: 'completed' | 'failed' | 'aborted' | 'unconfirmed'
+  at: number
+  message?: string
+  code?: string
+}
+
 export interface Session {
   id: string
   /** Kimi Server 注册工作区 ID。旧会话可能没有。 */
@@ -157,6 +164,8 @@ export interface Session {
   contextTokens: number
   /** 实际请求执行时间之和，不包含会话闲置时间。 */
   activeDurationMs?: number
+  /** 最近一轮的明确终态；null 表示当前轮尚未收到可信终态。 */
+  lastOutcome?: RunOutcome | null
   events: TrajectoryEvent[]
   archived?: boolean
 }
@@ -330,6 +339,8 @@ export interface AccountUsage {
   weekly?: UsageWindow
   fiveHour?: UsageWindow
   extraBalanceCny: number | null
+  extraMonthlyUsedCny?: number | null
+  extraMonthlyLimitCny?: number | null
   updatedAt: number
   error?: string
 }
@@ -341,6 +352,43 @@ export interface AccountState {
   providers: AccountProviderInfo[]
   models: AccountModelInfo[]
   usage?: AccountUsage
+}
+
+export interface AccountProfileIdentity {
+  displayName?: string
+  username?: string
+}
+
+export interface ProfileActivityDay {
+  date: string
+  tokens: number
+  tasks: number
+}
+
+export interface ProfileExtensionUsage {
+  name: string
+  count: number
+  kind: 'skill' | 'tool'
+}
+
+export interface AccountProfileStats {
+  identity?: AccountProfileIdentity
+  totalTokens: number
+  peakTaskTokens: number
+  longestTaskDurationMs: number
+  currentStreakDays: number
+  longestStreakDays: number
+  daily: ProfileActivityDay[]
+  fastModePct: number
+  topReasoningEffort?: {
+    label: string
+    pct: number
+  }
+  exploredSkillCount: number
+  skillUseCount: number
+  taskCount: number
+  topExtensions: ProfileExtensionUsage[]
+  updatedAt: number
 }
 
 // ── 附件（K3 原生多模态）───────────────────────────────────────────

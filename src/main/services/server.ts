@@ -128,8 +128,8 @@ async function readBoundedJson(response: Response): Promise<unknown> {
 }
 
 /** 读取服务端自报版本与能力，用于阻止误连到同端口上的不兼容实例。 */
-export async function readKimiServerMeta(endpoint = DEFAULT_ENDPOINT): Promise<KimiServerMeta> {
-  const token = await readKimiServerToken()
+export async function readKimiServerMeta(endpoint = DEFAULT_ENDPOINT, suppliedToken?: string): Promise<KimiServerMeta> {
+  const token = suppliedToken || await readKimiServerToken()
   if (!token) throw new Error('未找到 Kimi Server token')
   const response = await fetch(`${kimiServerOrigin(endpoint)}/api/v1/meta`, {
     signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
@@ -153,8 +153,8 @@ export async function readKimiServerMeta(endpoint = DEFAULT_ENDPOINT): Promise<K
   }
 }
 
-async function assertKimiServerCompatibility(runtime: KimiRuntime, endpoint: KimiServerEndpoint): Promise<void> {
-  const meta = await readKimiServerMeta(endpoint)
+async function assertKimiServerCompatibility(runtime: KimiRuntime, endpoint: KimiServerEndpoint, token?: string): Promise<void> {
+  const meta = await readKimiServerMeta(endpoint, token)
   if (runtime.manifest && meta.serverVersion !== runtime.manifest.version) {
     throw new Error(`Kimi Server 版本不匹配：随包 runtime 为 ${runtime.manifest.version}，端口实例为 ${meta.serverVersion}`)
   }
@@ -184,8 +184,10 @@ export class ServerService {
   private foregroundChild: ChildProcess | null = null
   private foregroundServerId: string | undefined
   private foregroundError = ''
+  private remoteToken: string | null = null
 
   private async runningEndpoint(serverId = this.foregroundServerId): Promise<KimiServerEndpoint | null> {
+    if (this.remoteToken) return await probeKimiServer(this.endpoint) ? this.endpoint : null
     const locked = await readKimiServerEndpoint(serverId)
     const candidates = [locked, this.endpoint, DEFAULT_ENDPOINT].filter(
       (candidate): candidate is KimiServerEndpoint => candidate !== null
@@ -206,6 +208,21 @@ export class ServerService {
 
   webSocketUrl(): string {
     return `${this.baseUrl().replace(/^http:/, 'ws:')}/api/v1/ws`
+  }
+
+  async token(): Promise<string | null> {
+    return this.remoteToken || readKimiServerToken()
+  }
+
+  activateRemote(port: number, token: string): void {
+    this.endpoint = { host: HOST, port }
+    this.remoteToken = token
+    this.startedByApp = false
+  }
+
+  deactivateRemote(): void {
+    this.remoteToken = null
+    this.endpoint = DEFAULT_ENDPOINT
   }
 
   private async ensureCli(): Promise<boolean> {
@@ -275,7 +292,7 @@ export class ServerService {
         return { ...base, available: false, running: true, managedByApp: false, error: this.cliError }
       }
       try {
-        await assertKimiServerCompatibility(this.runtime, running)
+        await assertKimiServerCompatibility(this.runtime, running, this.remoteToken ?? undefined)
       } catch (error) {
         return {
           ...base,
@@ -314,6 +331,18 @@ export class ServerService {
   }
 
   private async startOnce(): Promise<ServerActionResult> {
+    if (this.remoteToken) {
+      const running = await this.runningEndpoint()
+      if (!running) return { ok: false, available: true, error: 'SSH 隧道已断开' }
+      const runtime = this.runtime ?? await resolveKimiRuntime()
+      this.runtime = runtime
+      try {
+        await assertKimiServerCompatibility(runtime, running, this.remoteToken)
+        return { ok: true, available: true }
+      } catch (error) {
+        return { ok: false, available: true, error: error instanceof Error ? error.message : '远程 Kimi Server 兼容性校验失败' }
+      }
+    }
     if (!(await this.ensureCli())) {
       return { ok: false, available: false, error: this.cliError || 'kimi CLI 未安装，无法拉起服务' }
     }
@@ -397,6 +426,9 @@ export class ServerService {
   }
 
   async stop(): Promise<ServerActionResult> {
+    if (this.remoteToken) {
+      return { ok: false, available: true, error: '当前为远程连接，请在“连接”设置中断开' }
+    }
     const available = await this.ensureCli()
     if (!available) return { ok: false, available: false, error: 'kimi CLI 未安装' }
     if (!this.startedByApp) {
@@ -426,6 +458,10 @@ export class ServerService {
 
   /** App 退出时只清理由本实例启动的服务，不触碰共享 home 下的其他 Kimi Server。 */
   dispose(): void {
+    if (this.remoteToken) {
+      this.deactivateRemote()
+      return
+    }
     if (!this.startedByApp) return
     try {
       if (!this.foregroundServerId && this.foregroundChild?.exitCode === null) {

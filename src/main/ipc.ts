@@ -17,6 +17,7 @@ import { PtyService } from './services/pty'
 import { ServerService } from './services/server'
 import { KimiClientService } from './services/kimi-client'
 import { ConfigurationService, CONFIGURATION_PATHS } from './services/configuration'
+import { ConnectionService } from './services/connection'
 import { UpdateService } from './services/update'
 import { isPathWithin, isSafeOpenTarget, isTrustedRendererUrl } from './security'
 
@@ -24,6 +25,7 @@ const ptyService = new PtyService()
 const serverService = new ServerService()
 const kimiClient = new KimiClientService(serverService)
 const configurationService = new ConfigurationService()
+const connectionService = new ConnectionService(serverService, () => kimiClient.reconnectBackend())
 const updateService = new UpdateService()
 let configurationWatchStarted = false
 const rendererUrl = process.env['ELECTRON_RENDERER_URL'] || pathToFileURL(join(__dirname, '../renderer/index.html')).href
@@ -90,6 +92,7 @@ export function registerIpcHandlers(): void {
     }
   })
   ipcMain.handle(IPC.AppCheckUpdate, () => updateService.check(app.getVersion()))
+  ipcMain.handle(IPC.AppReleaseHistory, () => updateService.history())
   ipcMain.handle(IPC.AppOpenUpdate, () => updateService.open())
   ipcMain.handle(IPC.AppDownloadUpdate, (event) =>
     updateService.download((received, total) => {
@@ -203,6 +206,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.AgentAuthPoll, () => kimiClient.pollLogin())
   ipcMain.handle(IPC.AccountGet, () => kimiClient.getAccount(false))
   ipcMain.handle(IPC.AccountRefresh, () => kimiClient.getAccount(true))
+  ipcMain.handle(IPC.AccountProfile, () => kimiClient.getAccountProfile())
   ipcMain.handle(IPC.AccountConfigure, (_event, input) => kimiClient.configureAccount(input))
   ipcMain.handle(IPC.AccountLogout, () => kimiClient.logoutAccount())
 
@@ -238,6 +242,33 @@ export function registerIpcHandlers(): void {
     if (!action.ok) return action
     return configurationService.get()
   })
+  const registeredProjectRoot = async (value: unknown): Promise<string> => {
+    if (typeof value !== 'string' || !isAbsolute(value) || value.length > 4_096) {
+      throw new Error('项目路径无效')
+    }
+    const result = await kimiClient.listWorkspaces()
+    if (!result.ok) throw new Error(result.error || '项目列表读取失败')
+    const workspace = result.workspaces.find((item) => item.root === value)
+    if (!workspace) throw new Error('只能管理已注册项目的 Hooks')
+    const [registered, requested] = await Promise.all([fs.realpath(workspace.root), fs.realpath(value)])
+    if (registered !== requested) throw new Error('项目路径校验失败')
+    return registered
+  }
+  ipcMain.handle(IPC.ConfigurationHooksGet, async (_event, root) => {
+    try {
+      return configurationService.getProjectHooks(await registeredProjectRoot(root))
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '项目 Hooks 读取失败' }
+    }
+  })
+  ipcMain.handle(IPC.ConfigurationHooksSave, async (_event, input) => {
+    try {
+      const root = await registeredProjectRoot(input?.root)
+      return configurationService.saveProjectHooks(root, input?.document)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '项目 Hooks 保存失败' }
+    }
+  })
   ipcMain.handle(
     IPC.ConfigurationOpen,
     async (_event, target: keyof ConfigurationSnapshot['paths']) => {
@@ -255,10 +286,18 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(IPC.ConnectionGet, () => connectionService.get())
+  ipcMain.handle(IPC.ConnectionSave, (_event, input) => connectionService.save(input))
+  ipcMain.handle(IPC.ConnectionRemove, (_event, id) => connectionService.remove(id))
+  ipcMain.handle(IPC.ConnectionTest, (_event, id) => connectionService.test(id))
+  ipcMain.handle(IPC.ConnectionConnect, (_event, id) => connectionService.connect(id))
+  ipcMain.handle(IPC.ConnectionDisconnect, () => connectionService.disconnect())
+
   // 退出前清场：杀掉所有终端进程与本 App 拉起的 server
   app.once('before-quit', () => {
     ptyService.disposeAll()
     kimiClient.dispose()
+    connectionService.dispose()
     serverService.dispose()
     configurationService.dispose()
   })

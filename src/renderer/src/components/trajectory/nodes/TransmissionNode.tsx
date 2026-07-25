@@ -54,7 +54,7 @@ export function TransmissionNode({
         <Chevron open={open} />
         {t('深空思考')}
         {itemCount > 1 ? ` · ${itemCount}${locale === 'en-US' ? ' steps' : ' 段'}` : ''}
-        {durationMs > 0 ? ` · ${durationMs < 100 ? '<0.1' : (durationMs / 1000).toFixed(1)}s` : ` · ${t('时长未知')}`}
+        {` · ${durationMs < 100 ? '<0.1' : (durationMs / 1000).toFixed(1)}s`}
       </button>
       {open ? (
         <pre

@@ -1,5 +1,6 @@
 import type {
   AccountProviderKind,
+  AccountProfileStats,
   AccountState,
   ApprovalDecision,
   ApprovalRequest,
@@ -23,6 +24,7 @@ import type {
 export const IPC = {
   AppGetInfo: 'app:get-info',
   AppCheckUpdate: 'app:check-update',
+  AppReleaseHistory: 'app:release-history',
   AppOpenUpdate: 'app:open-update',
   AppDownloadUpdate: 'app:download-update',
   AppUpdateProgress: 'app:update-progress',
@@ -69,6 +71,7 @@ export const IPC = {
   AccountGet: 'account:get',
   AccountConfigure: 'account:configure',
   AccountRefresh: 'account:refresh',
+  AccountProfile: 'account:profile',
   AccountLogout: 'account:logout',
   WorkspaceList: 'workspace:list',
   WorkspaceCreate: 'workspace:create',
@@ -79,7 +82,15 @@ export const IPC = {
   ConfigurationSave: 'configuration:save',
   ConfigurationOpen: 'configuration:open',
   ConfigurationManage: 'configuration:manage',
+  ConfigurationHooksGet: 'configuration:hooks-get',
+  ConfigurationHooksSave: 'configuration:hooks-save',
   ConfigurationChanged: 'configuration:changed',
+  ConnectionGet: 'connection:get',
+  ConnectionSave: 'connection:save',
+  ConnectionRemove: 'connection:remove',
+  ConnectionTest: 'connection:test',
+  ConnectionConnect: 'connection:connect',
+  ConnectionDisconnect: 'connection:disconnect',
   /** Kimi Server 增量事件，经主进程归一化后推送给渲染进程。 */
   AgentUpdate: 'agent:update'
 } as const
@@ -103,6 +114,23 @@ export interface AppUpdateInfo {
   releaseNotes?: string
   publishedAt?: string
   assetName?: string
+  /** 两条更新源都不可用时返回；不能把检查失败伪装成“已是最新”。 */
+  error?: string
+}
+
+export interface AppReleaseInfo {
+  version: string
+  name?: string
+  notes?: string
+  publishedAt?: string
+  url: string
+  prerelease: boolean
+}
+
+export interface AppReleaseHistory {
+  ok: boolean
+  releases: AppReleaseInfo[]
+  error?: string
 }
 
 export interface CliStatus {
@@ -398,6 +426,83 @@ export type ConfigurationManageInput =
   | { kind: 'plugin'; action: 'toggle'; id: string; enabled: boolean }
   | { kind: 'plugin'; action: 'remove'; id: string }
 
+export type ProjectHookEvent =
+  | 'PreToolUse'
+  | 'PermissionRequest'
+  | 'PostToolUse'
+  | 'PreCompact'
+  | 'PostCompact'
+  | 'SessionStart'
+  | 'SessionEnd'
+  | 'UserPromptSubmit'
+  | 'SubagentStart'
+  | 'SubagentStop'
+  | 'Stop'
+
+export interface ProjectHook {
+  id: string
+  event: ProjectHookEvent
+  matcher?: string
+  command: string
+  commandWindows?: string
+  timeoutSec?: number
+  async: boolean
+  enabled: boolean
+  statusMessage?: string
+}
+
+export interface ProjectHooksDocument {
+  version: 1
+  description?: string
+  hooks: ProjectHook[]
+}
+
+export interface ProjectHooksResult extends AgentActionResult {
+  root?: string
+  path?: string
+  document?: ProjectHooksDocument
+  warnings?: string[]
+}
+
+export interface ProjectHooksSaveInput {
+  root: string
+  document: ProjectHooksDocument
+}
+
+export interface SshConnectionProfile {
+  id: string
+  name: string
+  host: string
+  port: number
+  user: string
+  identityFile?: string
+  remoteKimiPath: string
+  remoteKimiHome: string
+  remoteServerPort: number
+}
+
+export interface ConnectionStatus {
+  state: 'idle' | 'connecting' | 'connected' | 'error'
+  activeProfileId?: string
+  localPort?: number
+  connectedAt?: number
+  error?: string
+}
+
+export interface ConnectionSnapshot {
+  sshAvailable: boolean
+  profiles: SshConnectionProfile[]
+  status: ConnectionStatus
+}
+
+export interface ConnectionResult extends AgentActionResult {
+  snapshot?: ConnectionSnapshot
+}
+
+export interface SshConnectionSaveInput extends Omit<SshConnectionProfile, 'id'> {
+  id?: string
+}
+
 export interface AuthFlowResult extends AgentActionResult {
   ready: boolean
   pending?: boolean
@@ -417,6 +522,10 @@ export interface AccountResult extends AgentActionResult {
   account?: AccountState
 }
 
+export interface AccountProfileResult extends AgentActionResult {
+  profile?: AccountProfileStats
+}
+
 export type AgentUpdate =
   | { kind: 'session-upsert'; session: Session }
   | { kind: 'session-patch'; sessionId: string; patch: Partial<Session> }
@@ -432,6 +541,7 @@ export type AgentUpdate =
 export interface IpcInvokeMap {
   [IPC.AppGetInfo]: { args: []; result: AppInfo }
   [IPC.AppCheckUpdate]: { args: []; result: AppUpdateInfo }
+  [IPC.AppReleaseHistory]: { args: []; result: AppReleaseHistory }
   [IPC.AppOpenUpdate]: { args: []; result: AgentActionResult }
   [IPC.AppDownloadUpdate]: { args: []; result: AgentActionResult }
   [IPC.WindowMinimize]: { args: []; result: void }
@@ -482,6 +592,7 @@ export interface IpcInvokeMap {
   [IPC.AccountGet]: { args: []; result: AccountResult }
   [IPC.AccountConfigure]: { args: [input: AccountConfigureInput]; result: AccountResult }
   [IPC.AccountRefresh]: { args: []; result: AccountResult }
+  [IPC.AccountProfile]: { args: []; result: AccountProfileResult }
   [IPC.AccountLogout]: { args: []; result: AccountResult }
   [IPC.WorkspaceList]: { args: []; result: WorkspaceCollectionResult }
   [IPC.WorkspaceCreate]: { args: []; result: WorkspaceResult }
@@ -492,6 +603,14 @@ export interface IpcInvokeMap {
   [IPC.ConfigurationSave]: { args: [input: ConfigurationSaveInput]; result: ConfigurationResult }
   [IPC.ConfigurationOpen]: { args: [target: keyof ConfigurationSnapshot['paths']]; result: AgentActionResult }
   [IPC.ConfigurationManage]: { args: [input: ConfigurationManageInput]; result: ConfigurationResult }
+  [IPC.ConfigurationHooksGet]: { args: [root: string]; result: ProjectHooksResult }
+  [IPC.ConfigurationHooksSave]: { args: [input: ProjectHooksSaveInput]; result: ProjectHooksResult }
+  [IPC.ConnectionGet]: { args: []; result: ConnectionResult }
+  [IPC.ConnectionSave]: { args: [input: SshConnectionSaveInput]; result: ConnectionResult }
+  [IPC.ConnectionRemove]: { args: [id: string]; result: ConnectionResult }
+  [IPC.ConnectionTest]: { args: [id: string]; result: ConnectionResult }
+  [IPC.ConnectionConnect]: { args: [id: string]; result: ConnectionResult }
+  [IPC.ConnectionDisconnect]: { args: []; result: ConnectionResult }
 }
 
 // ── preload 暴露给渲染端的 API 形状 ────────────────────────────────
@@ -499,6 +618,8 @@ export interface FarsideApi {
   getAppInfo(): Promise<AppInfo>
   update: {
     check(): Promise<AppUpdateInfo>
+    /** 读取经过主进程校验的 GitHub Release 更新日志。 */
+    history(): Promise<AppReleaseHistory>
     /** 打开主进程最近一次校验过的安装包或 Release 页面。 */
     open(): Promise<AgentActionResult>
     /** 应用内直接下载最近一次校验过的安装包并自动打开。 */
@@ -534,6 +655,7 @@ export interface FarsideApi {
     get(): Promise<AccountResult>
     configure(input: AccountConfigureInput): Promise<AccountResult>
     refresh(): Promise<AccountResult>
+    profile(): Promise<AccountProfileResult>
     logout(): Promise<AccountResult>
   }
   workspace: {
@@ -548,8 +670,18 @@ export interface FarsideApi {
     save(input: ConfigurationSaveInput): Promise<ConfigurationResult>
     open(target: keyof ConfigurationSnapshot['paths']): Promise<AgentActionResult>
     manage(input: ConfigurationManageInput): Promise<ConfigurationResult>
+    hooks(root: string): Promise<ProjectHooksResult>
+    saveHooks(input: ProjectHooksSaveInput): Promise<ProjectHooksResult>
     /** 订阅 config.toml、mcp.json、AGENTS.md 与扩展目录的磁盘变更。 */
     onChanged(cb: (snapshot: ConfigurationSnapshot) => void): () => void
+  }
+  connection: {
+    get(): Promise<ConnectionResult>
+    save(input: SshConnectionSaveInput): Promise<ConnectionResult>
+    remove(id: string): Promise<ConnectionResult>
+    test(id: string): Promise<ConnectionResult>
+    connect(id: string): Promise<ConnectionResult>
+    disconnect(): Promise<ConnectionResult>
   }
   agent: {
     initialize(): Promise<AgentBootstrapResult>

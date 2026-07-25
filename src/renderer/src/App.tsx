@@ -38,7 +38,6 @@ export default function App() {
     s.questionQueue.find((item) => item.sessionId === s.activeSessionId)
   )
   const lastError = useFarsideStore((s) => s.lastError)
-  const authReady = useFarsideStore((s) => s.authReady)
   const sending = useFarsideStore((s) => s.sending)
   const active = useActiveSession()
   const lastEscapeAt = useRef(0)
@@ -412,7 +411,7 @@ export default function App() {
       <UndoSelector />
       <NoiseOverlay />
       <Onboarding />
-      <UpdatePrompt enabled={booted && authReady !== false && !sending} />
+      <UpdatePrompt enabled={booted} visible={!sending} />
       {!booted ? <BootSplash onDone={handleBooted} /> : null}
     </div>
   )

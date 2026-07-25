@@ -17,16 +17,39 @@ function relativeTime(at: number, english: boolean): string {
   return hours < 24 ? (english ? `${hours}h ago` : `${hours} 小时前`) : (english ? `${Math.floor(hours / 24)}d ago` : `${Math.floor(hours / 24)} 天前`)
 }
 
-function sessionStatus(phase: MoonPhaseValue, english: boolean): { label: string; active: boolean } {
+function sessionStatus(
+  session: Session,
+  english: boolean
+): { label: string; active: boolean; color: string } {
+  const phase = session.phase
   const labels: Record<MoonPhaseValue, [string, string]> = {
-    new: ['已完成', 'Completed'],
+    new: ['空闲', 'Idle'],
     waxing: ['已接收', 'Queued'],
     'first-quarter': ['思考中', 'Thinking'],
     gibbous: ['执行中', 'Running'],
     full: ['等待确认', 'Awaiting approval'],
     waning: ['收尾中', 'Wrapping up']
   }
-  return { label: labels[phase][english ? 1 : 0], active: phase !== 'new' }
+  if (phase === 'new' && session.lastOutcome) {
+    const outcome = {
+      completed: ['已完成', 'Completed'],
+      failed: ['执行中断', 'Failed'],
+      aborted: ['已取消', 'Aborted'],
+      unconfirmed: ['状态未确认', 'Unconfirmed']
+    } as const
+    const label = outcome[session.lastOutcome.status][english ? 1 : 0]
+    const color = session.lastOutcome.status === 'completed'
+      ? 'var(--faint)'
+      : session.lastOutcome.status === 'aborted'
+        ? 'var(--flare)'
+        : 'var(--redshift)'
+    return { label, active: false, color }
+  }
+  return {
+    label: labels[phase][english ? 1 : 0],
+    active: phase !== 'new',
+    color: phase === 'new' ? 'var(--faint)' : 'var(--moonlight)'
+  }
 }
 
 function projectRootLabel(root: string): string {
@@ -195,7 +218,7 @@ export function SessionList() {
   const renderSession = (session: Session) => {
     const active = session.id === activeId
     const renaming = session.id === renamingSession
-    const status = sessionStatus(session.phase, english)
+    const status = sessionStatus(session, english)
     return (
       <div
         key={session.id}
@@ -228,7 +251,7 @@ export function SessionList() {
           ) : <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12.5, color: active ? 'var(--moonlight)' : 'var(--dust)' }}>{pinnedSessions.includes(session.id) ? '◆ ' : ''}{session.title}</span>}
           <span className="mono" style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2, fontSize: 10.5, color: 'var(--faint)' }}>
             <span>{relativeTime(session.updatedAt, english)} · {session.contextTokens >= 1000 ? `${Math.round(session.contextTokens / 1000)}K` : session.contextTokens} tok</span>
-            <span style={{ marginLeft: 'auto', color: status.active ? 'var(--moonlight)' : 'var(--faint)' }}>{status.label}</span>
+            <span style={{ marginLeft: 'auto', color: status.color }}>{status.label}</span>
           </span>
         </span>
         {!renaming ? <button aria-label="会话操作" onClick={(event) => { event.stopPropagation(); setOpenMenu(openMenu === `s:${session.id}` ? null : `s:${session.id}`) }} style={{ width: 22, height: 20, color: 'var(--faint)', fontSize: 14 }}>···</button> : null}

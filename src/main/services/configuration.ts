@@ -10,11 +10,19 @@ import type {
   ConfigurationSaveInput,
   ConfigurationSnapshot,
   PluginInfo,
+  ProjectHook,
+  ProjectHookEvent,
+  ProjectHooksDocument,
+  ProjectHooksResult,
   SkillInfo
 } from '@shared/ipc'
 
 const ROOT = process.env['KIMI_CODE_HOME'] || join(homedir(), '.kimi-code')
 const MAX_CONFIGURATION_BYTES = 2 * 1024 * 1024
+const PROJECT_HOOK_EVENTS = new Set<ProjectHookEvent>([
+  'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PreCompact', 'PostCompact',
+  'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'SubagentStart', 'SubagentStop', 'Stop'
+])
 
 export const CONFIGURATION_PATHS: ConfigurationSnapshot['paths'] = {
   config: join(ROOT, 'config.toml'),
@@ -177,6 +185,70 @@ function validateMcp(content: string): void {
     typeof servers !== 'object' || servers === null || Array.isArray(servers)
   ) {
     throw new Error('MCP 配置必须是包含 mcpServers 对象的 JSON')
+  }
+}
+
+function validateProjectHooks(value: unknown): ProjectHooksDocument {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Hooks 配置必须是对象')
+  }
+  const document = value as Partial<ProjectHooksDocument>
+  if (document.version !== 1 || !Array.isArray(document.hooks)) {
+    throw new Error('Hooks 配置必须使用 version 1 且包含 hooks 数组')
+  }
+  if (document.hooks.length > 100) throw new Error('单个项目最多配置 100 个 Hook')
+  if (document.description !== undefined && (typeof document.description !== 'string' || document.description.length > 2_000)) {
+    throw new Error('Hooks 描述不能超过 2000 个字符')
+  }
+  const ids = new Set<string>()
+  const hooks: ProjectHook[] = document.hooks.map((raw, index) => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new Error(`第 ${index + 1} 个 Hook 格式无效`)
+    }
+    const hook = raw as Partial<ProjectHook>
+    const id = typeof hook.id === 'string' ? hook.id.trim() : ''
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(id)) {
+      throw new Error(`第 ${index + 1} 个 Hook ID 只能包含小写字母、数字、点、下划线和连字符`)
+    }
+    if (ids.has(id)) throw new Error(`Hook ID 重复：${id}`)
+    ids.add(id)
+    if (typeof hook.event !== 'string' || !PROJECT_HOOK_EVENTS.has(hook.event as ProjectHookEvent)) {
+      throw new Error(`Hook ${id} 的事件类型无效`)
+    }
+    const command = typeof hook.command === 'string' ? hook.command.trim() : ''
+    if (!command || command.length > 4_096) throw new Error(`Hook ${id} 的命令不能为空且不能超过 4096 个字符`)
+    const timeoutSec = hook.timeoutSec === undefined ? undefined : Number(hook.timeoutSec)
+    if (timeoutSec !== undefined && (!Number.isInteger(timeoutSec) || timeoutSec < 1 || timeoutSec > 3_600)) {
+      throw new Error(`Hook ${id} 的超时必须在 1–3600 秒之间`)
+    }
+    const matcher = typeof hook.matcher === 'string' && hook.matcher.trim() ? hook.matcher.trim() : undefined
+    if (matcher && matcher.length > 512) throw new Error(`Hook ${id} 的 matcher 不能超过 512 个字符`)
+    const commandWindows = typeof hook.commandWindows === 'string' && hook.commandWindows.trim()
+      ? hook.commandWindows.trim()
+      : undefined
+    if (commandWindows && commandWindows.length > 4_096) throw new Error(`Hook ${id} 的 Windows 命令过长`)
+    const statusMessage = typeof hook.statusMessage === 'string' && hook.statusMessage.trim()
+      ? hook.statusMessage.trim()
+      : undefined
+    if (statusMessage && statusMessage.length > 240) throw new Error(`Hook ${id} 的状态提示不能超过 240 个字符`)
+    return {
+      id,
+      event: hook.event as ProjectHookEvent,
+      ...(matcher ? { matcher } : {}),
+      command,
+      ...(commandWindows ? { commandWindows } : {}),
+      ...(timeoutSec !== undefined ? { timeoutSec } : {}),
+      async: hook.async === true,
+      enabled: hook.enabled !== false,
+      ...(statusMessage ? { statusMessage } : {})
+    }
+  })
+  return {
+    version: 1,
+    ...(typeof document.description === 'string' && document.description.trim()
+      ? { description: document.description.trim() }
+      : {}),
+    hooks
   }
 }
 
@@ -355,6 +427,48 @@ export class ConfigurationService {
       return this.get()
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : '配置保存失败' }
+    }
+  }
+
+  async getProjectHooks(root: string): Promise<ProjectHooksResult> {
+    try {
+      if (!isAbsolute(root)) throw new Error('Hooks 只能绑定到绝对项目路径')
+      const projectRoot = await fs.realpath(root)
+      const path = join(projectRoot, '.farside', 'hooks.json')
+      const raw = await readText(path)
+      const document = raw
+        ? validateProjectHooks(JSON.parse(raw) as unknown)
+        : { version: 1 as const, hooks: [] }
+      const warnings = document.hooks.flatMap((hook) => {
+        const items: string[] = []
+        if (process.platform === 'win32' && !hook.commandWindows) {
+          items.push(`${hook.id} 未配置 Windows 专用命令，将使用 command`)
+        }
+        if (hook.async && ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit'].includes(hook.event)) {
+          items.push(`${hook.id} 是前置事件但配置为异步，不会阻塞后续操作`)
+        }
+        return items
+      })
+      return { ok: true, root: projectRoot, path, document, warnings }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '项目 Hooks 读取失败' }
+    }
+  }
+
+  async saveProjectHooks(root: string, value: unknown): Promise<ProjectHooksResult> {
+    try {
+      if (!isAbsolute(root)) throw new Error('Hooks 只能绑定到绝对项目路径')
+      const projectRoot = await fs.realpath(root)
+      const document = validateProjectHooks(value)
+      const path = join(projectRoot, '.farside', 'hooks.json')
+      const content = `${JSON.stringify(document, null, 2)}\n`
+      if (Buffer.byteLength(content, 'utf8') > MAX_CONFIGURATION_BYTES) {
+        throw new Error('Hooks 配置不能超过 2 MiB')
+      }
+      await writeAtomic(path, content)
+      return this.getProjectHooks(projectRoot)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '项目 Hooks 保存失败' }
     }
   }
 

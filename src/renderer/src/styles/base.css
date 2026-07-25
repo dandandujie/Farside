@@ -785,6 +785,20 @@ button {
   white-space: nowrap;
 }
 
+.update-prompt__update-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.update-prompt__quarantine-note {
+  width: 190px;
+  color: var(--faint);
+  font-size: 8.5px;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .update-prompt__later,
 .update-prompt__download {
   min-height: 34px;
@@ -851,6 +865,13 @@ button {
   }
   .update-prompt__asset {
     grid-column: 1 / -1;
+  }
+  .update-prompt__update-action {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+  .update-prompt__quarantine-note {
+    width: auto;
   }
 }
 

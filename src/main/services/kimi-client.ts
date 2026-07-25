@@ -7,6 +7,7 @@ import WebSocket, { type RawData } from 'ws'
 import {
   IPC,
   type AccountConfigureInput,
+  type AccountProfileResult,
   type AccountResult,
   type ConfigurationManageInput,
   type AgentActionResult,
@@ -48,6 +49,7 @@ import {
   fromKimiServerModel,
   toKimiServerModel,
   type AccountModelInfo,
+  type AccountProfileStats,
   type AccountProviderInfo,
   type AccountState,
   type AccountUsage,
@@ -60,7 +62,7 @@ import {
   type Session,
   type TrajectoryEvent
 } from '@shared/types'
-import { readKimiServerToken, type ServerService } from './server'
+import type { ServerService } from './server'
 import { SUPPORTED_KIMI_WS_PROTOCOL_VERSION } from './runtime-manifest'
 import { resolveOAuthLoginState } from './oauth-login-state'
 import { sanitizeZipFileName } from '../security'
@@ -713,6 +715,25 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(number) ? number : null
 }
 
+function localDateKey(timestamp: number): string {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function profileReasoningLabel(value: string): string {
+  return {
+    max: '极高',
+    high: '高',
+    medium: '中',
+    low: '低',
+    minimal: '最低',
+    on: '开启'
+  }[value.toLowerCase()] ?? value
+}
+
 function usageWindow(value: unknown): AccountUsage['weekly'] {
   if (!isRecord(value)) return undefined
   const limit = finiteNumber(value.limit)
@@ -735,6 +756,41 @@ function fixedPointCny(value: number): number {
   return (cents > 0 && cents < 1 ? 1 : Math.round(cents)) / 100
 }
 
+function walletAmount(value: unknown, ...keys: string[]): number | null {
+  if (!isRecord(value)) return null
+  for (const key of keys) {
+    const amount = finiteNumber(value[key])
+    if (amount !== null) return amount
+  }
+  return null
+}
+
+function walletCurrency(value: unknown): string | null {
+  return isRecord(value) && typeof value.currency === 'string'
+    ? value.currency.toUpperCase()
+    : null
+}
+
+function walletCny(value: unknown, ...keys: string[]): number | null {
+  const amount = walletAmount(value, ...keys)
+  if (amount === null || walletCurrency(value) !== 'CNY') return null
+  return fixedPointCny(amount)
+}
+
+function friendlyRunError(message: string, code?: string): string {
+  const haystack = `${code ?? ''} ${message}`.toLowerCase()
+  if (/quota|额度|balance|余额|insufficient|resource_exhausted|payment/.test(haystack)) {
+    return `额度不足，本轮执行已中断。请在“设置 → 账户”检查 5 小时、周限额或额度加油包。${message ? `\n\n服务端信息：${message}` : ''}`
+  }
+  if (/rate.?limit|too many requests|限流|频率/.test(haystack)) {
+    return `请求触发限流，本轮尚未完成。请等待额度窗口恢复后重试。${message ? `\n\n服务端信息：${message}` : ''}`
+  }
+  if (/unauth|forbidden|401|403|登录|token|credential/.test(haystack)) {
+    return `登录凭据已失效或无权调用，本轮执行已中断。请刷新账户或重新登录。${message ? `\n\n服务端信息：${message}` : ''}`
+  }
+  return message || '模型或服务链路异常终止，未生成可信的完成信号。'
+}
+
 /** Kimi Server REST + WebSocket 客户端。所有远端形状在主进程归一成 Farside 契约。 */
 export class KimiClientService {
   private socket: WebSocket | null = null
@@ -752,6 +808,10 @@ export class KimiClientService {
   private subagents = new Map<string, Map<string, SubagentRuntime>>()
   private wirePaths = new Map<string, string>()
   private readonly turnChanges = new TurnChangesService()
+  private activeRuns = new Set<string>()
+  private failedRuns = new Set<string>()
+  private settleTimers = new Map<string, NodeJS.Timeout>()
+  private managedIdentity: AccountProfileStats['identity']
 
   constructor(private readonly server: ServerService) {}
 
@@ -763,7 +823,7 @@ export class KimiClientService {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const started = await this.server.start()
     if (!started.ok) throw new Error(started.error || 'Kimi Server 启动失败')
-    const token = await readKimiServerToken()
+    const token = await this.server.token()
     if (!token) throw new Error('未找到 Kimi Server token')
     const res = await fetch(`${this.server.baseUrl()}${path}`, {
       ...init,
@@ -918,6 +978,16 @@ export class KimiClientService {
       if (!isRecord(payload)) throw new Error('官方用量响应格式无效')
       const user = isRecord(payload.user) ? payload.user : {}
       const membership = isRecord(user.membership) ? user.membership : {}
+      const displayName = [user.displayName, user.display_name, user.nickname, user.name]
+        .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      const username = [user.username, user.handle, user.userId, user.user_id, user.id]
+        .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      if (displayName || username) {
+        this.managedIdentity = {
+          ...(displayName ? { displayName: displayName.trim() } : {}),
+          ...(username ? { username: username.trim().replace(/^@/, '') } : {})
+        }
+      }
       const planCode = typeof membership.level === 'string' ? membership.level : undefined
       const rawLimits = Array.isArray(payload.limits) ? payload.limits : []
       const fiveHourItem = rawLimits.find((item) => {
@@ -952,6 +1022,13 @@ export class KimiClientService {
           amountLeft !== null && currency.toUpperCase() === 'CNY'
             ? fixedPointCny(amountLeft)
             : null,
+        extraMonthlyUsedCny: walletCny(booster?.monthlyUsed, 'amount', 'amountUsed', 'used'),
+        extraMonthlyLimitCny: walletCny(
+          booster?.monthlyChargeLimit,
+          'amount',
+          'amountLimit',
+          'limit'
+        ),
         updatedAt: Date.now()
       }
     } catch (error) {
@@ -960,6 +1037,211 @@ export class KimiClientService {
         extraBalanceCny: null,
         updatedAt: Date.now(),
         error: error instanceof Error ? error.message : '订阅用量查询失败'
+      }
+    }
+  }
+
+  async getAccountProfile(): Promise<AccountProfileResult> {
+    try {
+      const root = process.env['KIMI_CODE_HOME'] || join(homedir(), '.kimi-code')
+      const wireFiles: string[] = []
+      const collectWireFiles = async (directory: string): Promise<void> => {
+        let entries
+        try {
+          entries = await fs.readdir(directory, { withFileTypes: true })
+        } catch {
+          return
+        }
+        await Promise.all(entries.map(async (entry) => {
+          const path = join(directory, entry.name)
+          if (entry.isDirectory()) await collectWireFiles(path)
+          else if (entry.isFile() && entry.name === 'wire.jsonl') wireFiles.push(path)
+        }))
+      }
+      await collectWireFiles(join(root, 'sessions'))
+
+      const daily = new Map<string, { tokens: number; tasks: number }>()
+      const reasoning = new Map<string, number>()
+      const skills = new Map<string, number>()
+      const tools = new Map<string, number>()
+      let totalTokens = 0
+      let peakTaskTokens = 0
+      let longestTaskDurationMs = 0
+      let taskCount = 0
+      let requestCount = 0
+      let fastRequestCount = 0
+
+      const increment = (map: Map<string, number>, key: string): void => {
+        if (key) map.set(key, (map.get(key) ?? 0) + 1)
+      }
+      const finalizeTask = (tokens: number, durationMs: number): void => {
+        peakTaskTokens = Math.max(peakTaskTokens, tokens)
+        longestTaskDurationMs = Math.max(longestTaskDurationMs, durationMs)
+      }
+
+      for (const file of wireFiles) {
+        const text = await fs.readFile(file, 'utf8').catch(() => '')
+        let taskTokens = 0
+        let taskDurationMs = 0
+        let pendingRequestAt: number | null = null
+        let hasTask = false
+        for (const line of text.split(/\r?\n/)) {
+          if (!line.trim()) continue
+          let record: UnknownRecord
+          try {
+            const parsed = JSON.parse(line) as unknown
+            if (!isRecord(parsed)) continue
+            record = parsed
+          } catch {
+            continue
+          }
+          const type = typeof record.type === 'string' ? record.type : ''
+          const at = timestampOf(record.time ?? record.at ?? record.created_at)
+          if (type === 'turn.prompt') {
+            if (hasTask) finalizeTask(taskTokens, taskDurationMs)
+            hasTask = true
+            taskTokens = 0
+            taskDurationMs = 0
+            pendingRequestAt = null
+            taskCount += 1
+            if (at !== null) {
+              const key = localDateKey(at)
+              const value = daily.get(key) ?? { tokens: 0, tasks: 0 }
+              value.tasks += 1
+              daily.set(key, value)
+            }
+            continue
+          }
+          if (type === 'llm.request') {
+            pendingRequestAt = at
+            requestCount += 1
+            const model = typeof record.model === 'string' ? record.model.toLowerCase() : ''
+            const alias = typeof record.modelAlias === 'string' ? record.modelAlias.toLowerCase() : ''
+            if (/highspeed|fast/.test(`${model} ${alias}`)) fastRequestCount += 1
+            if (typeof record.thinkingEffort === 'string') increment(reasoning, record.thinkingEffort)
+            continue
+          }
+          if (type === 'usage.record' && isRecord(record.usage)) {
+            const tokens = tokenUsageTotal(record.usage) ?? 0
+            totalTokens += tokens
+            taskTokens += tokens
+            if (at !== null) {
+              const key = localDateKey(at)
+              const value = daily.get(key) ?? { tokens: 0, tasks: 0 }
+              value.tokens += tokens
+              daily.set(key, value)
+              if (pendingRequestAt !== null && at >= pendingRequestAt) {
+                taskDurationMs += at - pendingRequestAt
+              }
+            }
+            pendingRequestAt = null
+            continue
+          }
+          if (type === 'context.append_loop_event' && isRecord(record.event)) {
+            const event = record.event
+            if (event.type !== 'tool.call' || typeof event.name !== 'string') continue
+            const toolName = event.name.trim()
+            increment(tools, toolName)
+            if (toolName.toLowerCase() === 'skill' && isRecord(event.args)) {
+              const skill = typeof event.args.skill === 'string'
+                ? event.args.skill
+                : typeof event.args.name === 'string'
+                  ? event.args.name
+                  : ''
+              increment(skills, skill.replace(/^\$/, '').trim())
+            }
+          }
+        }
+        if (hasTask || taskTokens > 0) finalizeTask(taskTokens, taskDurationMs)
+      }
+
+      const activeDays = [...daily.entries()]
+        .filter(([, value]) => value.tokens > 0 || value.tasks > 0)
+        .map(([date]) => date)
+        .sort()
+      const activeSet = new Set(activeDays)
+      let longestStreakDays = 0
+      let runningStreak = 0
+      let previousDay: number | null = null
+      for (const day of activeDays) {
+        // WHY: 用 UTC 日期序号比较，避免夏令时切换日并非恰好 24 小时而打断 streak。
+        const timestamp = new Date(`${day}T00:00:00Z`).getTime()
+        runningStreak = previousDay !== null && timestamp - previousDay === 86_400_000
+          ? runningStreak + 1
+          : 1
+        longestStreakDays = Math.max(longestStreakDays, runningStreak)
+        previousDay = timestamp
+      }
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      let cursor = new Date(today)
+      if (!activeSet.has(localDateKey(cursor.getTime()))) cursor.setDate(cursor.getDate() - 1)
+      let currentStreakDays = 0
+      while (activeSet.has(localDateKey(cursor.getTime()))) {
+        currentStreakDays += 1
+        cursor.setDate(cursor.getDate() - 1)
+      }
+
+      const reasoningTop = [...reasoning.entries()].sort((a, b) => b[1] - a[1])[0]
+      const reasoningTotal = [...reasoning.values()].reduce((sum, count) => sum + count, 0)
+      const coreTools = new Set([
+        'bash', 'edit', 'read', 'grep', 'todolist', 'readmediafile', 'write', 'fetchurl',
+        'websearch', 'taskoutput', 'agent', 'glob', 'enterplanmode', 'exitplanmode',
+        'skill', 'taskstop', 'tasklist'
+      ])
+      const topExtensions: AccountProfileStats['topExtensions'] = [
+        ...[...skills.entries()].map(([name, count]) => ({ name, count, kind: 'skill' as const })),
+        ...[...tools.entries()]
+          .filter(([name]) => !coreTools.has(name.toLowerCase()))
+          .map(([name, count]) => ({ name, count, kind: 'tool' as const }))
+      ].sort((a, b) => b.count - a.count).slice(0, 5)
+
+      let identity = this.managedIdentity
+      try {
+        const credential = JSON.parse(
+          await fs.readFile(join(root, 'credentials', 'kimi-code.json'), 'utf8')
+        ) as unknown
+        if (isRecord(credential) && typeof credential.access_token === 'string') {
+          const payload = credential.access_token.split('.')[1]
+          if (payload) {
+            const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown
+            if (!identity && isRecord(claims) && typeof claims.user_id === 'string') {
+              identity = { username: claims.user_id }
+            }
+          }
+        }
+      } catch {
+        // API Key 和未登录用户没有 OAuth 身份；本机统计仍然可用。
+      }
+
+      const profile: AccountProfileStats = {
+        ...(identity ? { identity } : {}),
+        totalTokens,
+        peakTaskTokens,
+        longestTaskDurationMs,
+        currentStreakDays,
+        longestStreakDays,
+        daily: [...daily.entries()]
+          .map(([date, value]) => ({ date, ...value }))
+          .sort((a, b) => a.date.localeCompare(b.date)),
+        fastModePct: requestCount > 0 ? (fastRequestCount / requestCount) * 100 : 0,
+        ...(reasoningTop && reasoningTotal > 0 ? {
+          topReasoningEffort: {
+            label: profileReasoningLabel(reasoningTop[0]),
+            pct: (reasoningTop[1] / reasoningTotal) * 100
+          }
+        } : {}),
+        exploredSkillCount: skills.size,
+        skillUseCount: [...skills.values()].reduce((sum, count) => sum + count, 0),
+        taskCount,
+        topExtensions,
+        updatedAt: Date.now()
+      }
+      return { ok: true, profile }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : '个人资料统计读取失败'
       }
     }
   }
@@ -1170,6 +1452,9 @@ export class KimiClientService {
         this.request<{ ready?: boolean }>('/api/v1/auth')
       ])
       const sessions = remoteSessions.map((item) => this.bindTurnChanges(sessionFromRemote(item)))
+      for (const item of remoteSessions) {
+        if (item.busy === true) this.activeRuns.add(item.id)
+      }
       const approvals = (
         await Promise.all(
           remoteSessions
@@ -1361,7 +1646,7 @@ export class KimiClientService {
   async exportSession(sessionId: string): Promise<{ data: Buffer; fileName: string }> {
     const started = await this.server.start()
     if (!started.ok) throw new Error(started.error || 'Kimi Server 启动失败')
-    const token = await readKimiServerToken()
+    const token = await this.server.token()
     if (!token) throw new Error('未找到 Kimi Server token')
     const res = await fetch(`${this.server.baseUrl()}/api/v1/sessions/${encodeURIComponent(sessionId)}/export`, {
       method: 'POST',
@@ -1526,6 +1811,15 @@ export class KimiClientService {
           }
         })
       }
+      // WebSocket 的 prompt.submitted 可能早于或晚于 HTTP 响应；请求发出前先锁住
+      // 本地运行态，避免夹在中间的 busy=false 误判完成。
+      this.activeRuns.add(input.sessionId)
+      this.failedRuns.delete(input.sessionId)
+      this.emit({
+        kind: 'session-patch',
+        sessionId: input.sessionId,
+        patch: { phase: 'waxing', lastOutcome: null }
+      })
       await this.request(`/api/v1/sessions/${encodeURIComponent(input.sessionId)}/prompts`, {
         method: 'POST',
         body: JSON.stringify({
@@ -1539,6 +1833,7 @@ export class KimiClientService {
       })
       return { ok: true }
     } catch (error) {
+      if (input && typeof input.sessionId === 'string') this.activeRuns.delete(input.sessionId)
       return { ok: false, error: error instanceof Error ? error.message : '指令发送失败' }
     }
   }
@@ -2088,7 +2383,7 @@ export class KimiClientService {
     ) {
       return
     }
-    const token = await readKimiServerToken()
+    const token = await this.server.token()
     if (!token) throw new Error('未找到 Kimi Server token')
     this.disposed = false
     await new Promise<void>((resolve, reject) => {
@@ -2252,6 +2547,106 @@ export class KimiClientService {
     return (this.activeToolCalls.get(sessionId)?.size ?? 0) > 0
   }
 
+  private clearSettleTimer(sessionId: string): void {
+    const timer = this.settleTimers.get(sessionId)
+    if (timer) clearTimeout(timer)
+    this.settleTimers.delete(sessionId)
+  }
+
+  private failActiveTools(sessionId: string, message: string): void {
+    const active = this.activeToolCalls.get(sessionId)
+    if (!active) return
+    for (const toolCallId of active) {
+      this.upsertEvent(sessionId, {
+        id: `tool-${toolCallId}`,
+        kind: 'instrument',
+        at: Date.now(),
+        tool: 'Tool',
+        argsSummary: '',
+        status: 'failed',
+        output: message
+      })
+    }
+    this.activeToolCalls.delete(sessionId)
+  }
+
+  private markRunFailed(
+    sessionId: string,
+    message: string,
+    status: 'failed' | 'aborted' | 'unconfirmed' = 'failed',
+    code?: string
+  ): void {
+    const now = Date.now()
+    this.clearSettleTimer(sessionId)
+    this.finishThinking(sessionId, now)
+    this.failActiveTools(sessionId, message)
+    this.activeRuns.delete(sessionId)
+    if (status !== 'aborted') this.failedRuns.add(sessionId)
+    this.settleActiveSubagents(
+      sessionId,
+      status === 'aborted' ? 'cancelled' : 'failed',
+      message
+    )
+    this.emit({
+      kind: 'session-patch',
+      sessionId,
+      patch: {
+        phase: 'new',
+        updatedAt: now,
+        lastOutcome: { status, at: now, message, code }
+      }
+    })
+  }
+
+  private scheduleUnconfirmedCheck(sessionId: string): void {
+    if (!this.activeRuns.has(sessionId)) return
+    this.clearSettleTimer(sessionId)
+    const timer = setTimeout(() => {
+      this.settleTimers.delete(sessionId)
+      void this.listRemoteSessions()
+        .then((sessions) => {
+          if (!this.activeRuns.has(sessionId)) return
+          const remote = sessions.find((session) => session.id === sessionId)
+          if (remote?.busy === true) {
+            this.emit({
+              kind: 'session-patch',
+              sessionId,
+              patch: {
+                phase: remote.pending_interaction ? 'full' : 'first-quarter'
+              }
+            })
+            this.scheduleUnconfirmedCheck(sessionId)
+            return
+          }
+          if (remote?.pending_interaction === 'approval') {
+            this.emit({ kind: 'session-patch', sessionId, patch: { phase: 'full' } })
+            void this.syncApprovals(sessionId, true)
+            return
+          }
+          if (remote?.pending_interaction === 'question') {
+            this.emit({ kind: 'session-patch', sessionId, patch: { phase: 'full' } })
+            void this.syncQuestions(sessionId, true)
+            return
+          }
+          this.markRunFailed(
+            sessionId,
+            '运行已停止，但服务端没有返回“已完成”信号。可能由额度耗尽、网络断开或服务异常引起；请检查账户用量后重试。',
+            'unconfirmed'
+          )
+        })
+        .catch((error) => {
+          this.emit({
+            kind: 'connection',
+            connected: false,
+            error: error instanceof Error ? error.message : '无法核对任务完成状态'
+          })
+          // 网络暂时不可用时继续保持“收尾中”，不能反向猜成已完成。
+          this.scheduleUnconfirmedCheck(sessionId)
+        })
+    }, 4_000)
+    this.settleTimers.set(sessionId, timer)
+  }
+
   private subagentRuntime(sessionId: string, subagentId: string, at: number): SubagentRuntime {
     let bySession = this.subagents.get(sessionId)
     if (!bySession) {
@@ -2376,6 +2771,9 @@ export class KimiClientService {
     }
     if (this.handleSubagentActivity(sessionId, type, payload, now)) return
     if (type === 'prompt.submitted') {
+      this.clearSettleTimer(sessionId)
+      this.activeRuns.add(sessionId)
+      this.failedRuns.delete(sessionId)
       this.activeToolCalls.delete(sessionId)
       this.discardSettledSubagents(sessionId)
       const content = Array.isArray(payload.content) ? payload.content : []
@@ -2406,12 +2804,22 @@ export class KimiClientService {
           text,
           attachments: attachments.length ? attachments : undefined
         })
-        this.emit({ kind: 'session-patch', sessionId, patch: { phase: 'waxing', updatedAt: now } })
+        this.emit({
+          kind: 'session-patch',
+          sessionId,
+          patch: { phase: 'waxing', updatedAt: now, lastOutcome: null }
+        })
       }
       return
     }
     if (type === 'turn.started') {
-      this.emit({ kind: 'session-patch', sessionId, patch: { phase: 'first-quarter' } })
+      this.clearSettleTimer(sessionId)
+      this.activeRuns.add(sessionId)
+      this.emit({
+        kind: 'session-patch',
+        sessionId,
+        patch: { phase: 'first-quarter', lastOutcome: null }
+      })
       return
     }
     if (type === 'thinking.delta' && typeof payload.delta === 'string') {
@@ -2556,11 +2964,14 @@ export class KimiClientService {
             ? 'full'
             : busy
               ? this.hasActiveToolCalls(sessionId) ? 'gibbous' : 'first-quarter'
-              : 'new'
+              : this.activeRuns.has(sessionId)
+                ? 'waning'
+                : 'new'
         }
       })
-      if (pending === 'approval') void this.syncApprovals(sessionId)
-      if (pending === 'question') void this.syncQuestions(sessionId)
+      if (pending === 'approval') void this.syncApprovals(sessionId, true)
+      if (pending === 'question') void this.syncQuestions(sessionId, true)
+      if (!pending && !busy) this.scheduleUnconfirmedCheck(sessionId)
       return
     }
     if (type === 'agent.status.updated') {
@@ -2643,30 +3054,53 @@ export class KimiClientService {
       this.finishThinking(sessionId, now)
       this.activeToolCalls.delete(sessionId)
       if (type === 'prompt.aborted') {
-        this.settleActiveSubagents(sessionId, 'cancelled', '主请求已终止')
+        this.markRunFailed(sessionId, '请求已由用户终止，未完成当前任务。', 'aborted')
+        return
       } else if (
         type === 'turn.ended' &&
         typeof payload.reason === 'string' &&
-        payload.reason !== 'completed'
+        !['completed', 'end_turn', 'stop', 'success'].includes(payload.reason.toLowerCase())
       ) {
         const reason = compactActivity(payload.reason) || '主请求未完成'
-        this.settleActiveSubagents(sessionId, 'failed', reason)
+        this.markRunFailed(sessionId, friendlyRunError(reason), 'failed', payload.reason)
+        return
+      }
+      if (type === 'prompt.completed') {
+        this.clearSettleTimer(sessionId)
+        this.activeRuns.delete(sessionId)
+        if (!this.failedRuns.has(sessionId)) {
+          this.emit({
+            kind: 'session-patch',
+            sessionId,
+            patch: {
+              phase: 'new',
+              updatedAt: now,
+              lastOutcome: { status: 'completed', at: now }
+            }
+          })
+        }
+        void this.syncPersistedTelemetry(sessionId)
+        return
       }
       this.emit({
         kind: 'session-patch',
         sessionId,
-        patch: { phase: type === 'turn.ended' ? 'waning' : 'new', updatedAt: now }
+        patch: { phase: 'waning', updatedAt: now }
       })
-      if (type === 'prompt.completed') void this.syncPersistedTelemetry(sessionId)
+      this.scheduleUnconfirmedCheck(sessionId)
       return
     }
-    if ((type === 'error' || type === 'warning') && typeof payload.message === 'string') {
+    if (type === 'error' || type === 'warning') {
+      const rawMessage = textOf(payload.message ?? payload.error ?? payload.detail, 4_000)
+      const code = typeof payload.code === 'string' ? payload.code : undefined
+      const message = type === 'error' ? friendlyRunError(rawMessage, code) : rawMessage
       this.upsertEvent(sessionId, {
         id: `${type}-${String(payload.code ?? randomUUID())}-${now}`,
         kind: 'message',
         at: now,
-        markdown: `**链路${type === 'error' ? '中断' : '警告'}** · ${payload.message}`
+        markdown: `**链路${type === 'error' ? '中断' : '警告'}**\n\n${message || '服务端未提供更多信息。'}`
       })
+      if (type === 'error') this.markRunFailed(sessionId, message, 'failed', code)
     }
   }
 
@@ -2699,12 +3133,13 @@ export class KimiClientService {
     }
   }
 
-  private async syncApprovals(sessionId: string): Promise<void> {
+  private async syncApprovals(sessionId: string, retry = false): Promise<void> {
     const inFlight = this.approvalSyncs.get(sessionId)
     if (inFlight) return inFlight
     const task = (async () => {
       try {
-        for (const delay of [0, 80, 200, 500, 1_000, 2_000]) {
+        const delays = retry ? [0, 80, 200, 500, 1_000, 2_000] : [0]
+        for (const delay of delays) {
           if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
           let approvals = await this.listApprovals(sessionId)
           if (!approvals.length) {
@@ -2740,12 +3175,13 @@ export class KimiClientService {
     return task
   }
 
-  private async syncQuestions(sessionId: string): Promise<void> {
+  private async syncQuestions(sessionId: string, retry = false): Promise<void> {
     const inFlight = this.questionSyncs.get(sessionId)
     if (inFlight) return inFlight
     const task = (async () => {
       try {
-        for (const delay of [0, 80, 200, 500, 1_000, 2_000]) {
+        const delays = retry ? [0, 80, 200, 500, 1_000, 2_000] : [0]
+        for (const delay of delays) {
           if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
           let questions = await this.listQuestions(sessionId)
           if (!questions.length) {
@@ -2770,6 +3206,16 @@ export class KimiClientService {
     return task
   }
 
+  async reconnectBackend(): Promise<void> {
+    this.disposed = true
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.socket?.close()
+    this.socket = null
+    this.disposed = false
+    await this.connect()
+  }
+
   dispose(): void {
     this.disposed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
@@ -2779,6 +3225,8 @@ export class KimiClientService {
     this.pendingStreamUpdates.clear()
     this.approvalSyncs.clear()
     this.questionSyncs.clear()
+    for (const timer of this.settleTimers.values()) clearTimeout(timer)
+    this.settleTimers.clear()
     this.socket?.close()
     this.socket = null
     this.sender = null

@@ -52,10 +52,13 @@ function releaseHighlights(notes: string | undefined, english: boolean): string[
 }
 
 interface UpdatePromptProps {
+  /** 后台检查开关；不应被登录态或任务状态阻断。 */
   enabled: boolean
+  /** 模态框展示时机；执行任务时可延后展示，但仍继续检查。 */
+  visible?: boolean
 }
 
-export function UpdatePrompt({ enabled }: UpdatePromptProps) {
+export function UpdatePrompt({ enabled, visible = true }: UpdatePromptProps) {
   const { locale } = usePreferences()
   const english = locale === 'en-US'
   const updateInfo = useFarsideStore((s) => s.updateInfo)
@@ -69,6 +72,7 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
   const primaryButton = useRef<HTMLButtonElement | null>(null)
   const shot = new URLSearchParams(window.location.search).get('shot')
   const update = shot === 'update' ? MOCK_UPDATE : updateInfo
+  const isMacUpdate = update?.assetName?.toLowerCase().endsWith('.dmg') === true
 
   useEffect(() => {
     if (!enabled || shot === 'update') return
@@ -109,7 +113,7 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
     return new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: 'numeric' }).format(date)
   }, [locale, update?.publishedAt])
 
-  if (!enabled || !update) return null
+  if (!enabled || !visible || !update) return null
 
   const dismiss = () => {
     dismissUpdate()
@@ -212,8 +216,8 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
           {downloaded ? (
             <p className="update-prompt__done">
               {english
-                ? 'The installer has been opened — follow its steps to finish the update.'
-                : '安装包已自动打开，按提示完成安装即可。'}
+                ? 'The installer is open. After installation, Farside will remove its macOS quarantine attribute and restart automatically.'
+                : '安装包已自动打开；完成安装后，Farside 会自动清除 macOS 隔离属性并重启。'}
             </p>
           ) : null}
           {downloading ? (
@@ -236,15 +240,27 @@ export function UpdatePrompt({ enabled }: UpdatePromptProps) {
             <button type="button" className="update-prompt__later" onClick={dismiss}>
               {english ? 'Later' : '稍后提醒'}
             </button>
-            <button
-              ref={primaryButton}
-              type="button"
-              className="update-prompt__download"
-              onClick={() => void runUpdate()}
-              disabled={downloading || opening || downloaded}
-            >
-              {primaryLabel}
-            </button>
+            <div className="update-prompt__update-action">
+              {isMacUpdate ? (
+                <span
+                  className="update-prompt__quarantine-note"
+                  title={'xattr -r -d com.apple.quarantine "/Applications/Farside.app"'}
+                >
+                  {english
+                    ? 'macOS: automatically runs xattr after installation; administrator approval may be requested.'
+                    : 'macOS：安装后自动运行 xattr 清除隔离属性；必要时会请求管理员授权。'}
+                </span>
+              ) : null}
+              <button
+                ref={primaryButton}
+                type="button"
+                className="update-prompt__download"
+                onClick={() => void runUpdate()}
+                disabled={downloading || opening || downloaded}
+              >
+                {primaryLabel}
+              </button>
+            </div>
           </footer>
         </div>
       </section>

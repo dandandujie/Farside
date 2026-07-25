@@ -1114,6 +1114,31 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       }
     }
     if (!state.activeSessionId) return
+    const api = window.api?.agent
+    if (!api) {
+      const event: TrajectoryEvent = {
+        id: `user-${Date.now()}`,
+        kind: 'user',
+        at: Date.now(),
+        text: promptText,
+        attachments: state.attachments.length ? state.attachments : undefined
+      }
+      set((current) => ({
+        ...composerPatchForSession(current, state.activeSessionId as string, { draft: '', attachments: [] }),
+        sessions: current.sessions.map((session) =>
+          session.id === current.activeSessionId
+            ? {
+                ...session,
+                phase: 'waxing',
+                lastOutcome: null,
+                updatedAt: Date.now(),
+                events: [...session.events, event]
+              }
+            : session
+        )
+      }))
+      return
+    }
     const queue = state.promptQueues[state.activeSessionId] ?? []
     if (queue.length >= 20) {
       set({ lastError: '当前会话的等待队列已达 20 条，请先处理或移除部分请求' })
@@ -1198,6 +1223,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           ? {
               ...item,
               phase: 'waxing',
+              lastOutcome: null,
               updatedAt: optimisticEvent.at,
               events: [...item.events, optimisticEvent]
             }
@@ -1336,7 +1362,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     const api = window.api?.update
     if (!api || visualPreview) return
     const result = await api.check().catch(() => null)
-    if (!result) {
+    if (!result || result.error) {
       if (manual) set({ updateNotice: { kind: 'failed' } })
       return
     }
