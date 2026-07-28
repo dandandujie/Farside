@@ -17,7 +17,7 @@ import { promisify } from 'node:util'
 
 const execFile = promisify(execFileCallback)
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const DEFAULT_SOURCE = resolve(root, '.tmp', 'kimi-code-0.28.0')
+const DEFAULT_SOURCE = resolve(root, '.tmp', 'kimi-code-0.29.2')
 const DEFAULT_AUTH_HOME = resolve(homedir(), '.kimi-code')
 const LEAN_PROMPT_PATH = resolve(root, 'experiments', 'harness-factorial', 'lean-system-prompt.md')
 const LEAN_TOOLS = ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash']

@@ -13,7 +13,7 @@ Farside 只有一套产品版本和一套 Runtime。Kimi Code 是上游核心与
 
 不存在运行时通道切换、缺失产物回退或“官方/自定义”双线选择。`kind` 只记录当前产物的真实来源，不代表可切换产品线。
 
-当前 `current` 仍锁定 0.27.0 官方基线制品，以保证迁移期间现有构建可复现。它不会再被新的官方 release 直接替换；下一次版本更新必须是完成源码适配和回归后的唯一 Farside Runtime 产物，并原位更新 `current`。
+当前 `current` 已锁定完成适配与 smoke 验证的 0.29.2 官方基线制品。它不会被后续官方 release 直接替换；下一次版本更新必须完成源码适配和回归，并原位更新唯一 `current`。
 
 ```powershell
 # 使用本机同版本源码构建产物准备开发资源
@@ -62,7 +62,7 @@ npm run runtime:upstream:check
 - `adapt/kimi-<version>`：完成差异审查和适配的临时分支；
 - `v<upstream>-farside.<n>`：唯一 Runtime 的不可变发布 tag。
 
-## 0.28.0 候选基线
+## 0.28.0 候选基线（历史记录）
 
 已完成 Kimi Code 0.27.0 → 0.28.0 的源码差异审查。候选源码固定为 tag `@moonshot-ai/kimi-code@0.28.0`、commit `a05228c67122c8233dc87226ce0ca7414780b680`；详细决策见 `evaluations/kimi-code-0.28.0-adaptation.md`。
 
@@ -81,7 +81,18 @@ npm run runtime:patch:check -- D:\path\to\kimi-code
 npm run runtime:patch:apply -- D:\path\to\kimi-code
 ```
 
-源码适配完成不等于可发布 runtime 已生成。`runtime.lock.json` 仍保持 0.27.0，直到 0.28.0 候选通过剩余真实账号回归、harness 配对评测和六平台构建，并发布 Farside 自有不可变产物后才原位更新。
+该节保留 0.28.0 的审查证据；0.29.2 已吸收其中三项 harness 变化，旧补丁不再重放。
+
+## 0.29.2 适配基线
+
+已完成 Kimi Code 0.28.0 → 0.29.2 的源码差异审查。候选源码固定为 tag `@moonshot-ai/kimi-code@0.29.2`、commit `8a45f10eddbb35c317047e82e567cdb59a220b4f`；详细决策见 `evaluations/kimi-code-0.29.2-adaptation.md`。
+
+关键决策：
+
+- 采纳 0.28.1+ 前台 `kimi web --no-open` 生命周期；0.29.2 已移除 `kimi web kill/ps`，Farside 改为持有子进程并通过 SIGTERM / `/api/v1/shutdown` 回收，保留 0.27 `server kill` 仅用于显式旧 runtime。
+- 采纳 0.29 的 v2 agent/profile、动态工具披露、视频 prompt、模型能力与 REST 扩展；Farside 继续使用稳定的 `/api/v1` REST 与 `/api/v1/ws` 兼容面，不切换到内部 `/api/v1/debug` RPC。
+- 0.27/0.28 的三项 harness 补丁已在 0.29.2 上游实现中出现，`scripts/farside-runtime-patch.mjs` 的 0.29.2 队列为空；历史 patch 文件只作审计归档。
+- `runtime.lock.json` 的唯一 `current` 已更新为 0.29.2，并固定 manifest、六平台 URL 与 SHA-256。发布仍必须通过本指南的完整发布门禁。
 
 本地 K3 prompt × 工具面 2×2 pilot 的 8 个单元均通过；精简工具面的边际平均总输入下降 59.4%，精简 prompt 没有稳定独立收益。渐进披露真实 smoke 首轮严格为 7 个工具，任务通过。详细数据见 `evaluations/k3-harness-factorial-pilot.md`。这些结果只支持当前工程方向，不能替代复杂任务质量评测。
 

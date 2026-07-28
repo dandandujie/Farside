@@ -3,15 +3,15 @@ import { access } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const KIMI_UPSTREAM_VERSION = '0.28.0'
-export const KIMI_UPSTREAM_REVISION = 'a05228c67122c8233dc87226ce0ca7414780b680'
+export const KIMI_UPSTREAM_VERSION = '0.29.2'
+export const KIMI_UPSTREAM_REVISION = '8a45f10eddbb35c317047e82e567cdb59a220b4f'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-export const KIMI_PATCH_FILES = [
-  '0001-tool-result-token-budget.patch',
-  '0002-rest-harness-controls.patch',
-  '0003-progressive-builtin-tools.patch'
-]
+// 0.29.2 contains the three previously maintained harness adaptations:
+// bounded tool-result storage, REST agent controls, and progressive built-ins.
+// Keep the 0.28 patch queue as historical evidence, but do not replay it on
+// the new source baseline.
+export const KIMI_PATCH_FILES = []
 
 const patchPaths = KIMI_PATCH_FILES.map((file) =>
   resolve(root, 'patches', 'kimi-code', KIMI_UPSTREAM_VERSION, file)

@@ -11,25 +11,25 @@ function fixture(sha256 = 'a'.repeat(64)): Record<string, unknown> {
     schemaVersion: 1,
     channel: 'current',
     kind: 'official',
-    version: '0.27.0',
-    upstreamVersion: '0.27.0',
+    version: '0.29.2',
+    upstreamVersion: '0.29.2',
     apiVersion: 1,
     wsProtocolVersion: 2,
-    observedVersion: 'kimi-code 0.27.0',
+    observedVersion: 'kimi-code 0.29.2',
     target: 'win32-x64',
     executable: 'kimi.exe',
     sha256,
     lockedSha256: sha256,
     source: 'https://github.com/MoonshotAI/kimi-code',
-    revision: '@moonshot-ai/kimi-code@0.27.0',
-    manifestUrl: 'https://code.kimi.com/kimi-code/binaries/0.27.0/manifest.json',
-    artifactUrl: 'https://code.kimi.com/kimi-code/binaries/0.27.0/kimi-code-win32-x64.exe',
+    revision: '8a45f10eddbb35c317047e82e567cdb59a220b4f',
+    manifestUrl: 'https://code.kimi.com/kimi-code/binaries/0.29.2/manifest.json',
+    artifactUrl: 'https://code.kimi.com/kimi-code/binaries/0.29.2/kimi-code-win32-x64.exe',
     provenance: 'locked-download'
   }
 }
 
 test('runtime manifest 固定目标、API 版本与锁定校验值', () => {
-  assert.equal(parseRuntimeManifest(fixture(), 'win32-x64', 'kimi.exe').version, '0.27.0')
+  assert.equal(parseRuntimeManifest(fixture(), 'win32-x64', 'kimi.exe').version, '0.29.2')
   assert.throws(() => parseRuntimeManifest({ ...fixture(), apiVersion: 2 }, 'win32-x64', 'kimi.exe'), /API 版本/)
   assert.throws(() => parseRuntimeManifest({ ...fixture(), wsProtocolVersion: 3 }, 'win32-x64', 'kimi.exe'), /WebSocket 协议版本/)
   assert.throws(() => parseRuntimeManifest({ ...fixture(), target: 'linux-x64' }, 'win32-x64', 'kimi.exe'), /目标不匹配/)

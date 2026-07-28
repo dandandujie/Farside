@@ -172,7 +172,9 @@ async function requestKimiServerShutdown(endpoint: KimiServerEndpoint): Promise<
 
 /**
  * 管理 Kimi Server 生命周期：0.27 使用后台 daemon，0.28+ 持有 `kimi web --no-open`
- * 前台子进程，并通过多实例注册表发现实际端口及精确停止自己启动的实例。
+ * 前台子进程，并通过多实例注册表发现实际端口。0.28.1+ 已移除
+ * `kimi web kill/ps`，因此由 Farside 启动的前台进程必须通过自身子进程句柄
+ * 和受保护的 shutdown endpoint 精确回收。
  */
 export class ServerService {
   private cliInstalled: boolean | null = null
@@ -269,12 +271,16 @@ export class ServerService {
 
   private async stopManaged(runtime: KimiRuntime): Promise<void> {
     const child = this.foregroundChild
-    const serverId = this.foregroundServerId
-    if (serverId) {
-      await runKimi(runtime.command, runtime.bundled, ['web', 'kill', serverId], 8_000)
-    } else if (child && child.exitCode === null) {
-      child.kill()
+    if (child && child.exitCode === null) {
+      // 0.28.1+ runs kap-server in-process and no longer supports
+      // `kimi web kill`. SIGTERM lets the CLI close the HTTP/WS server
+      // cleanly; the endpoint fallback covers a detached child.
+      child.kill('SIGTERM')
+    } else if (runtime.manifest && versionAtLeast(runtime.manifest.version, [0, 28, 0])) {
+      await requestKimiServerShutdown(this.endpoint).catch(() => {})
     } else {
+      // Keep the legacy 0.27 daemon cleanup path for explicitly selected
+      // developer runtimes.
       await runKimi(runtime.command, runtime.bundled, ['server', 'kill'], 8_000)
     }
     this.foregroundChild = null
@@ -471,16 +477,17 @@ export class ServerService {
         return
       }
       const runtime = this.runtime
-      const args = this.foregroundServerId
-        ? ['web', 'kill', this.foregroundServerId]
-        : ['server', 'kill']
-      const child = spawn(runtime?.command ?? 'kimi', args, {
-        windowsHide: true,
-        shell: process.platform === 'win32' && !runtime?.bundled,
-        stdio: 'ignore',
-        env: process.env
-      })
-      child.unref()
+      if (runtime?.manifest && versionAtLeast(runtime.manifest.version, [0, 28, 0])) {
+        void requestKimiServerShutdown(this.endpoint).catch(() => {})
+      } else {
+        const child = spawn(runtime?.command ?? 'kimi', ['server', 'kill'], {
+          windowsHide: true,
+          shell: process.platform === 'win32' && !runtime?.bundled,
+          stdio: 'ignore',
+          env: process.env
+        })
+        child.unref()
+      }
     } catch {
       // 退出清理不阻断 App。
     }
