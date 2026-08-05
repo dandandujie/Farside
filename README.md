@@ -62,7 +62,7 @@ npm run dist                # 为当前操作系统生成安装包
 
 本地开发可使用与锁定版本一致的源码构建产物，或用 `FARSIDE_KIMI_BINARY` 显式指定；正式打包应设置 `FARSIDE_DOWNLOAD_KIMI_RUNTIME=1`。CI 只下载 `runtime.lock.json` 中唯一 `current` 产物，校验 SHA-256 后再打包。随包 runtime 启动前还会复核内嵌锁文件、manifest 与文件完整性，服务就绪后核对 `/api/v1/meta` 的版本和能力。Kimi Code 上游升级只触发差异审查，不会自动替换 Farside Runtime。完整适配流程见 [Runtime 维护指南](RUNTIME.md)。
 
-Kimi Code 0.29.2 已完成源码差异审查与桌面服务生命周期适配。Runtime lock 已切换到 0.29.2 六平台制品；发布前仍需完成 Farside 自有产物签名、协议 smoke、harness 配对评测、真实账号回归与六平台构建门禁。
+Kimi Code 0.31.1 已完成源码与协议兼容性审查，作为下一候选基线；唯一 Runtime 仍锁定 0.29.2。只有候选完成 harness 配对评测、真实账号回归、六平台原生 smoke 与安装包启动测试后，才会更新 `current`。
 
 ## 结构
 

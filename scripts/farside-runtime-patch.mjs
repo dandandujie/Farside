@@ -3,14 +3,14 @@ import { access } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const KIMI_UPSTREAM_VERSION = '0.29.2'
-export const KIMI_UPSTREAM_REVISION = '8a45f10eddbb35c317047e82e567cdb59a220b4f'
+export const KIMI_UPSTREAM_VERSION = '0.31.1'
+export const KIMI_UPSTREAM_REVISION = '6b56c11697771fe596099b38bafae539820309a4'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-// 0.29.2 contains the three previously maintained harness adaptations:
+// 0.31.1 contains the three previously maintained harness adaptations:
 // bounded tool-result storage, REST agent controls, and progressive built-ins.
 // Keep the 0.28 patch queue as historical evidence, but do not replay it on
-// the new source baseline.
+// the candidate source baseline.
 export const KIMI_PATCH_FILES = []
 
 const patchPaths = KIMI_PATCH_FILES.map((file) =>
@@ -38,7 +38,8 @@ function git(sourceDir, args) {
   }).trim()
 }
 
-function patchState(sourceDir) {
+export function patchState(sourceDir) {
+  if (patchPaths.length === 0) return 'clean'
   try {
     git(sourceDir, ['apply', '--ignore-space-change', '--check', ...patchPaths])
     return 'clean'
@@ -67,6 +68,11 @@ export async function run(argv) {
     throw new Error(
       `Kimi Code 源码版本不匹配：需要 ${KIMI_UPSTREAM_REVISION}（${KIMI_UPSTREAM_VERSION}），实际 ${revision}`
     )
+  }
+
+  if (patchPaths.length === 0) {
+    process.stdout.write(`Kimi Code ${KIMI_UPSTREAM_VERSION} 无需重放 Farside 补丁，校验通过\n`)
+    return
   }
 
   const state = patchState(sourceDir)

@@ -96,6 +96,18 @@ npm run runtime:patch:apply -- D:\path\to\kimi-code
 
 本地 K3 prompt × 工具面 2×2 pilot 的 8 个单元均通过；精简工具面的边际平均总输入下降 59.4%，精简 prompt 没有稳定独立收益。渐进披露真实 smoke 首轮严格为 7 个工具，任务通过。详细数据见 `evaluations/k3-harness-factorial-pilot.md`。这些结果只支持当前工程方向，不能替代复杂任务质量评测。
 
+## 0.31.1 候选基线
+
+已完成 Kimi Code 0.29.2 → 0.31.1 的源码与公开协议差异审查。候选源码固定为 tag `@moonshot-ai/kimi-code@0.31.1`、commit `6b56c11697771fe596099b38bafae539820309a4`；详细决策见 `evaluations/kimi-code-0.31.1-adaptation.md`。
+
+审查结论：
+
+- `/api/v1` 没有删除既有路径，`/api/v1/ws`、协议版本与 Farside 要求的六项 capability 保持兼容。
+- 公开契约变化集中在 OAuth usage 字段、可选 `secondary_model` 配置和 undo 查询校验放宽；Farside 不消费 OAuth usage REST，另外两项向后兼容。
+- 前台 `kimi web --no-open`、实例注册文件、`/api/v1/meta` 与 `/api/v1/shutdown` 生命周期不需要新的桌面适配。
+- 上游新增自定义 agent、plugin system prompt、secondary model、非阻塞 TaskOutput、配额快速失败等能力，由 Runtime 提供，不在 Farside 重复实现。
+- 候选本机 darwin-arm64 二进制已核对官方 SHA-256，并通过 meta、OpenAPI 路径和启动行为对比；`current` 仍保持 0.29.2，等待剩余发布门禁。
+
 ## 发布门禁
 
 每次唯一 Runtime 更新至少完成：
