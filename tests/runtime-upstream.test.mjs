@@ -21,5 +21,6 @@ test('差异审查固定源码比较并禁止直接搬运 release', () => {
   const report = renderAuditReport('0.28.0', '0.29.2')
   assert.match(report, /禁止直接下载新官方 release/)
   assert.match(report, /协议 smoke/)
+  assert.doesNotMatch(report, /harness 配对评测|真实账号回归/)
   assert.match(report, /唯一 runtime/)
 })

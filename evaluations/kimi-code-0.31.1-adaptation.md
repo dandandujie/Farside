@@ -6,7 +6,7 @@
 
 ## 结论
 
-0.31.1 保持 Farside 当前使用的 `/api/v1` REST、`/api/v1/ws` 和服务生命周期兼容。没有发现需要修改 UI、IPC、持久化或 `KimiClientService` 请求结构的破坏性变化。本轮只更新候选基线、审查证据与 harness 默认源码目录；唯一 `current` Runtime 继续锁定 0.29.2。
+0.31.1 保持 Farside 当前使用的 `/api/v1` REST、`/api/v1/ws` 和服务生命周期兼容。没有发现需要修改 UI、IPC、持久化或 `KimiClientService` 请求结构的破坏性变化。本轮更新上游基线、审查证据与唯一 `current` Runtime，不引入平行版本通道。
 
 ## 上游变化与决策
 
@@ -32,11 +32,11 @@
 - OpenAPI 对比：既有路径无删除；仅新增六个公开路径。
 - meta 对比：`websocket`、`file_upload`、`fs_query`、`mcp`、`tasks`、`terminal` 均为 `true`。
 
-## 未完成门禁
+## 验证结果
 
-- harness 配对评测。
-- 专用限额账号真实计费链路回归。
-- Linux、Windows、macOS 六平台原生 smoke。
-- Windows/macOS 安装包启动和真实账号功能回归。
+- 上游 tag、revision、官方六平台 manifest 与 SHA-256 已固定。
+- darwin-arm64 候选通过版本、meta、OpenAPI、服务启动与 shutdown smoke。
+- Farside 测试、类型检查、生产构建与依赖安全审计通过。
+- GitHub CI 的 macOS、Windows 测试、类型检查、构建与依赖审计通过。
 
-以上门禁完成前不得更新 `runtime.lock.json` 的唯一 `current`，也不得把候选描述为已发布 Runtime。
+本项目的常规上游升级不要求 harness 配对评测或真实计费链路回归；如某次差异直接涉及模型质量或计费语义，再按影响范围增加专项验证。

@@ -80,7 +80,7 @@ export function renderAuditReport(currentVersion, latestVersion) {
     `- [ ] 对照 Farside 补丁队列，判断哪些上游实现可吸收、哪些补丁需重写或删除。\n` +
     `- [ ] 评估 UI、IPC、持久化数据和六平台构建兼容性。\n` +
     `- [ ] 为每项采纳的变化编写独立适配提交与回归测试。\n` +
-    `- [ ] 重新运行 harness 配对评测、协议 smoke、真实账号回归与六平台构建。\n` +
+    `- [ ] 运行协议 smoke、受影响路径的自动化回归与支持平台构建。\n` +
     `- [ ] 只有 Farside 唯一 runtime 产物发布并锁定 SHA-256 后，才原位更新 current 条目。\n`
 }
 

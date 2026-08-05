@@ -16,10 +16,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const lock = JSON.parse(await (await import('node:fs/promises')).readFile(resolve(root, 'runtime.lock.json'), 'utf8'))
 const patchScript = await readFile(resolve(root, 'scripts', 'farside-runtime-patch.mjs'), 'utf8')
 
-test('runtime 补丁固定到已审计的 Kimi Code 0.31.1 候选基线', () => {
+test('runtime 补丁与 current 固定到已审计的 Kimi Code 0.31.1 基线', () => {
   assert.equal(KIMI_UPSTREAM_VERSION, '0.31.1')
-  assert.equal(lock.runtime.upstreamVersion, '0.29.2')
-  assert.equal(lock.runtime.source.revision, '8a45f10eddbb35c317047e82e567cdb59a220b4f')
+  assert.equal(lock.runtime.upstreamVersion, '0.31.1')
+  assert.equal(lock.runtime.source.revision, '6b56c11697771fe596099b38bafae539820309a4')
   assert.equal(KIMI_UPSTREAM_REVISION, '6b56c11697771fe596099b38bafae539820309a4')
 })
 

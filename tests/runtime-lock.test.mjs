@@ -18,7 +18,7 @@ test('唯一 current runtime 完整锁定六个平台', () => {
   const lock = validateRuntimeLock(copyLock())
   const { name, runtime } = getCurrentRuntime(lock)
   assert.equal(name, 'current')
-  assert.equal(runtime.version, '0.29.2')
+  assert.equal(runtime.version, '0.31.1')
   assert.deepEqual(Object.keys(runtime.artifacts).sort(), [...RUNTIME_TARGETS].sort())
 })
 
@@ -43,7 +43,7 @@ test('唯一 runtime 拒绝缺失平台、不安全 URL 与伪造校验值', () 
 })
 
 test('版本输出必须包含边界完整的锁定版本', () => {
-  assert.equal(versionOutputMatches('kimi-code 0.29.2', '0.29.2'), true)
+  assert.equal(versionOutputMatches('kimi-code 0.31.1', '0.31.1'), true)
   assert.equal(versionOutputMatches('0.27.0-farside.1', '0.27.0-farside.1'), true)
   assert.equal(versionOutputMatches('kimi-code 0.27.01', '0.27.0'), false)
 })
