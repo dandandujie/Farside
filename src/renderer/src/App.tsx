@@ -77,6 +77,7 @@ export default function App() {
     else if (shot === 'account') {
       useFarsideStore.setState({
         authReady: false,
+        onboardingDismissed: false,
         account: { configured: false, providers: [], models: [] },
         lastError: null
       })
@@ -271,15 +272,19 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const state = useFarsideStore.getState()
-      if (
-        e.key === 'Escape' &&
-        state.sending &&
-        state.approvalQueue.length === 0 &&
-        state.questionQueue.length === 0
-      ) {
-        e.preventDefault()
-        state.abortCurrent()
-        return
+      if (e.key === 'Escape' && state.sending) {
+        const onField =
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement ||
+          (e.target instanceof HTMLElement && e.target.isContentEditable)
+        // 输入框和浮层里的 Escape 属于本地交互（关闭补全/面板），
+        // 不应顺带中断正在运行的 Agent 任务。
+        if (onField || state.paletteOpen || state.undoSelectorOpen) return
+        if (state.approvalQueue.length === 0 && state.questionQueue.length === 0) {
+          e.preventDefault()
+          state.abortCurrent()
+          return
+        }
       }
       if (
         e.key === 'Escape' &&

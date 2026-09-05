@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { WorkspaceEntry } from '@shared/ipc'
 import { SectionLabel } from '../../design-system/SectionLabel'
 import { useActiveSession, useFarsideStore, type PreviewDocument } from '../../lib/store'
@@ -130,6 +130,7 @@ export function FilesTab() {
   const [tree, setTree] = useState<WorkspaceEntry[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['src']))
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const selectedPathRef = useRef<string | null>(null)
   const [content, setContent] = useState<string[]>([])
   const [rawContent, setRawContent] = useState('')
   const [mime, setMime] = useState<string | undefined>()
@@ -174,11 +175,14 @@ export function FilesTab() {
   const select = (path: string): void => {
     if (!active || !window.api?.agent) return
     setSelectedPath(path)
+    selectedPathRef.current = path
     setContent([])
     setRawContent('')
     void window.api.agent
       .readWorkspaceFile(active.id, path)
       .then((result) => {
+        // 慢响应不得覆盖后选中的文件内容。
+        if (selectedPathRef.current !== path) return
         if (result.ok) {
           const nextContent = result.content ?? ''
           setContent(result.encoding === 'base64' ? [] : nextContent.split(/\r?\n/))
@@ -189,7 +193,10 @@ export function FilesTab() {
           setError(null)
         } else setError(result.error ?? (english ? 'Failed to read file' : '文件读取失败'))
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : (english ? 'Failed to read file' : '文件读取失败')))
+      .catch((reason) => {
+        if (selectedPathRef.current !== path) return
+        setError(reason instanceof Error ? reason.message : (english ? 'Failed to read file' : '文件读取失败'))
+      })
   }
 
   return (

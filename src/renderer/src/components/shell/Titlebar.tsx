@@ -150,7 +150,18 @@ export function Titlebar() {
             <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
           </svg>
         </WindowButton>
-        <WindowButton label={t('关闭')} close onClick={() => void window.api?.window.close()}>
+        <WindowButton
+          label={t('关闭')}
+          close
+          onClick={() => {
+            const state = useFarsideStore.getState()
+            const busy = state.sessions.some(
+              (session) => session.phase !== 'new' || state.promptQueues[session.id]?.length
+            )
+            if (busy && !window.confirm('仍有会话在运行或排队中，退出会中断任务。确定关闭 Farside？')) return
+            void window.api?.window.close()
+          }}
+        >
           <svg width="10" height="10" viewBox="0 0 10 10">
             <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" strokeWidth="1" />
             <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" strokeWidth="1" />

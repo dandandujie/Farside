@@ -8,6 +8,7 @@ const EN: Record<string, string> = {
   '账户': 'Account', '扩展中心': 'Extensions', '配置文件': 'Configuration', '偏好与权限': 'Preferences & permissions', '关于': 'About',
   'Provider 与用量': 'Provider & usage', '磁盘双向同步': 'Two-way disk sync', '链路 · 快捷键': 'Runtime · Shortcuts', '版本与运行时': 'Version & runtime',
   '设置控制中心': 'Settings control center', '账户、扩展与磁盘配置分区管理': 'Account, extensions, and disk configuration',
+  '个人资料': 'Profile', '活动与使用洞察': 'Activity & insights', '连接': 'Connections', 'Remote · SSH': 'Remote · SSH',
   '界面外观': 'Appearance', '语言': 'Language', '主题': 'Theme', '中文': 'Chinese', '英文': 'English', '暗黑': 'Dark', '明亮': 'Light',
   '默认使用中文与暗黑主题，偏好会保存在本机。': 'Chinese and dark mode are the defaults. Preferences are saved on this device.',
   '内置运行时': 'Bundled runtime', '系统运行时': 'System runtime', '浏览器预览': 'Browser preview', '已安装': 'Installed', '版本未知': 'Unknown version', '未检测到': 'Not detected',
@@ -22,7 +23,7 @@ const EN: Record<string, string> = {
   'API Key 接入不提供会员周期读数；Kimi OAuth 可显示套餐和限额。': 'API-key providers do not expose subscription windows; Kimi OAuth shows plan and limits.',
   '发现市场': 'Marketplace', '从发现、安装到启停和移除的完整闭环': 'Discover, install, enable, disable, and remove extensions',
   '在资源管理器中打开': 'Open in Explorer', '系统中打开': 'Open on disk', '保存': 'Save', '未保存改动': 'Unsaved changes',
-  '本地文件与编辑器双向热同步；外部修改会自动载入': 'Two-way live sync with local files; external edits load automatically',
+  '本地文件与编辑器双向热同步；项目 Hooks 独立存储': 'Two-way live sync with local files; project hooks live separately',
   'Provider、模型与 Kimi Code 运行参数': 'Provider, model, and Kimi Code runtime settings',
   '用户级 MCP Server 原始配置': 'Raw user-level MCP Server configuration', '所有项目继承的全局 Agent 指令': 'Global Agent instructions inherited by every project',
   '当前链路状态与键盘控制，一屏完成核对': 'Runtime status, appearance, permissions, and keyboard controls',
@@ -40,6 +41,9 @@ const EN: Record<string, string> = {
   '入轨中': 'Launching', '在轨': 'In orbit', '已归位': 'Returned', '信号丢失': 'Signal lost', '同步了': 'Synced', '条运行上下文': 'runtime context items', '个子代理参与处理': 'subagents participated',
   '5 小时': '5 hours', '周限额': 'Weekly limit',
   '账户与用量': 'Account & usage', '尚未登录': 'Not signed in', '选择 Provider 以连接 Kimi': 'Choose a Provider to connect Kimi', '刷新': 'Refresh', '退出': 'Sign out', '账户设置': 'Account settings',
+  '检查更新': 'Check for updates', '检查中…': 'Checking…', '检查更新失败，请稍后再试。': 'Update check failed. Please try again later.', '查看官方套餐与升级 ↗': 'Plans & upgrade ↗',
+  '刷新统计': 'Refresh stats', '统计中…': 'Crunching…',
+  '保存中…': 'Saving…', '测试中…': 'Testing…', '连接中…': 'Connecting…', '断开中…': 'Disconnecting…', '断开远程控制': 'Disconnect remote control', '+ 新建连接': '+ New connection', '测试': 'Test',
   '最小化': 'Minimize', '最大化': 'Maximize', '关闭': 'Close'
   , '登录账号，建立链路': 'Sign in and establish a connection', '断开链路，退出登录': 'Disconnect and sign out', '切换模型供应商': 'Switch model provider', '切换模型': 'Switch model', '打开设置': 'Open settings', '查看实验功能': 'View experiments', '调整权限档位': 'Change permissions', '切换界面主题': 'Switch theme', '新建会话': 'New session', '浏览历史会话': 'Browse session history', '查看后台任务': 'View background tasks', '从当前节点分叉新会话': 'Fork from the current point', '重命名当前会话': 'Rename current session'
   , '可视化维护用户级 mcp.json；运行态来自 Kimi Server。': 'Visually manage user-level mcp.json; runtime status comes from Kimi Server.', '取消': 'Cancel', '+ 添加 MCP': '+ Add MCP', '唯一名称': 'Unique name', '参数，每行一个': 'Arguments, one per line', '待连接': 'Pending', '尚未添加 MCP Server': 'No MCP Servers added',
@@ -47,7 +51,9 @@ const EN: Record<string, string> = {
   '+ 新建 Skill': '+ New Skill', '取消新建': 'Cancel', '何时使用这个 Skill': 'When should this Skill be used?', '创建': 'Create', '自动调用': 'Auto invoke', '删除': 'Delete', '没有发现用户 Skill': 'No user Skills found',
   '第三方插件可执行代码。安装前请确认来源可信；Farside 会复制到 Kimi 官方 managed 目录。': 'Third-party plugins can execute code. Verify the source before installation; Kimi manages the installed copy.', '尚未安装 Plugin': 'No Plugins installed',
   '搜索扩展，例如 browser automation': 'Search extensions, e.g. browser automation', '跨市场搜索 ↗': 'Search marketplaces ↗', '市场只负责发现。安装仍需在 MCP、Skills 或 Plugins 标签中确认来源，避免未经审查的代码直接进入 Agent 环境。': 'Marketplaces are for discovery. Confirm the source in the MCP, Skills, or Plugins tab before installing code into the Agent environment.',
-  'Model Context Protocol 官方注册表': 'Official Model Context Protocol registry', 'MCP Server 发现与配置': 'Discover and configure MCP Servers', '扩展索引与 MCP 目录': 'Extension index and MCP directory', '开放 Agent Skill 市场': 'Open Agent Skill marketplace', '社区 Agent Skill 仓库': 'Community Agent Skill repositories', 'Kimi 官方市场': 'Kimi official marketplace', '由 Kimi /plugins marketplace 提供': 'Powered by Kimi /plugins marketplace'
+  'Model Context Protocol 官方注册表': 'Official Model Context Protocol registry', 'MCP Server 发现与配置': 'Discover and configure MCP Servers', '扩展索引与 MCP 目录': 'Extension index and MCP directory', '开放 Agent Skill 市场': 'Open Agent Skill marketplace', '社区 Agent Skill 仓库': 'Community Agent Skill repositories', 'Kimi 官方市场': 'Kimi official marketplace', '由 Kimi /plugins marketplace 提供': 'Powered by Kimi /plugins marketplace',
+  '前往设置登录 Kimi 账户': 'Open Settings to sign in', '前往设置切换模型供应商': 'Open Settings to switch providers', '管理插件': 'Manage plugins', '编辑 mcp.json 配置': 'Edit mcp.json', '编辑 config.toml 配置': 'Edit config.toml', '压缩上下文，回收燃料': 'Compact context to reclaim fuel', '撤销上一轮操作': 'Undo the last turn', '重载当前会话': 'Reload this session', '导出会话与诊断日志为 ZIP': 'Export session and diagnostics as ZIP', '切到放开档，全部自动批准': 'Switch to YOLO; auto-approve everything', '切到自动档': 'Switch to auto approvals', '派出并行子代理': 'Launch parallel subagents', '设定自主目标，长线巡航': 'Set an autonomous long-running goal', '查看全部指令': 'View all commands', '查看配额用量': 'View quota usage', '查看链路状态': 'View runtime status', '管理 MCP 服务器': 'Manage MCP servers', '切换界面主题 ': 'Switch theme', '关闭 Farside': 'Quit Farside',
+  'PROJECT SCOPED': 'PROJECT SCOPED', '+ 添加 Hook': '+ Add Hook', '任务轨道': 'Trajectories'
 }
 
 interface PreferencesValue {
@@ -88,6 +94,13 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     document.documentElement.style.colorScheme = theme
     localStorage.setItem('farside:theme', theme)
   }, [theme])
+
+  // 斜杠命令 /theme 与偏好设置共用同一个主题状态源。
+  useEffect(() => {
+    const onToggle = () => setThemeState((current) => (current === 'dark' ? 'light' : 'dark'))
+    window.addEventListener('farside:toggle-theme', onToggle)
+    return () => window.removeEventListener('farside:toggle-theme', onToggle)
+  }, [])
 
   const t = useCallback((source: string) => locale === 'en-US' ? EN[source] ?? source : source, [locale])
   const value = useMemo(() => ({ locale, theme, setLocale: setLocaleState, setTheme: setThemeState, t }), [locale, theme, t])

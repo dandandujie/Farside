@@ -716,14 +716,13 @@ const MARKETS = [
 function MarketPanel() {
   const { t } = usePreferences()
   const [query, setQuery] = useState('')
-  const setDraft = useFarsideStore((state) => state.setDraft)
-  const setView = useFarsideStore((state) => state.setView)
-  return <div style={{ display: 'grid', gap: 12 }}><div style={{ display: 'flex', gap: 7 }}><input style={{ ...inputStyle, flex: 1 }} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('搜索扩展，例如 browser automation')} /><a style={buttonStyle} href={`https://www.google.com/search?q=${encodeURIComponent(`${query} site:registry.modelcontextprotocol.io OR site:skills.sh OR site:smithery.ai`)}`} target="_blank" rel="noreferrer">{t('跨市场搜索 ↗')}</a></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(220px, 1fr))', gap: 8 }}>{MARKETS.map((market) => market.url ? <a key={market.name} href={market.url} target="_blank" rel="noreferrer" style={{ minHeight: 86, padding: 12, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)', color: 'inherit' }}><span className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)' }}>{market.kind}</span><div style={{ marginTop: 8, fontSize: 13, color: 'var(--moonlight)' }}>{t(market.name)} <span style={{ color: 'var(--faint)' }}>↗</span></div><div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--faint)' }}>{t(market.note)}</div></a> : <button key={market.name} onClick={() => { setDraft('/plugins marketplace'); setView('sessions') }} style={{ minHeight: 86, padding: 12, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)' }}><span className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)' }}>{market.kind}</span><div style={{ marginTop: 8, fontSize: 13, color: 'var(--moonlight)' }}>{t(market.name)} <span style={{ color: 'var(--faint)' }}>→</span></div><div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--faint)' }}>{t(market.note)}</div></button>)}</div><p style={{ margin: 0, fontSize: 10.5, lineHeight: 1.6, color: 'var(--faint)' }}>{t('市场只负责发现。安装仍需在 MCP、Skills 或 Plugins 标签中确认来源，避免未经审查的代码直接进入 Agent 环境。')}</p></div>
+  const openSettings = useFarsideStore((state) => state.openSettings)
+  return <div style={{ display: 'grid', gap: 12 }}><div style={{ display: 'flex', gap: 7 }}><input style={{ ...inputStyle, flex: 1 }} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('搜索扩展，例如 browser automation')} /><a style={buttonStyle} href={`https://www.google.com/search?q=${encodeURIComponent(`${query} site:registry.modelcontextprotocol.io OR site:skills.sh OR site:smithery.ai`)}`} target="_blank" rel="noreferrer">{t('跨市场搜索 ↗')}</a></div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(220px, 1fr))', gap: 8 }}>{MARKETS.map((market) => market.url ? <a key={market.name} href={market.url} target="_blank" rel="noreferrer" style={{ minHeight: 86, padding: 12, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)', color: 'inherit' }}><span className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)' }}>{market.kind}</span><div style={{ marginTop: 8, fontSize: 13, color: 'var(--moonlight)' }}>{t(market.name)} <span style={{ color: 'var(--faint)' }}>↗</span></div><div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--faint)' }}>{t(market.note)}</div></a> : <button key={market.name} onClick={() => openSettings('extensions', 'plugins')} style={{ minHeight: 86, padding: 12, textAlign: 'left', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)' }}><span className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)' }}>{market.kind}</span><div style={{ marginTop: 8, fontSize: 13, color: 'var(--moonlight)' }}>{t(market.name)} <span style={{ color: 'var(--faint)' }}>→</span></div><div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--faint)' }}>{t(market.note)}</div></button>)}</div><p style={{ margin: 0, fontSize: 10.5, lineHeight: 1.6, color: 'var(--faint)' }}>{t('市场只负责发现。安装仍需在 MCP、Skills 或 Plugins 标签中确认来源，避免未经审查的代码直接进入 Agent 环境。')}</p></div>
 }
 
-function ExtensionCenter({ snapshot, onSnapshot }: { snapshot: ConfigurationSnapshot; onSnapshot: (snapshot: ConfigurationSnapshot) => void }) {
+function ExtensionCenter({ snapshot, onSnapshot, initialTab }: { snapshot: ConfigurationSnapshot; onSnapshot: (snapshot: ConfigurationSnapshot) => void; initialTab?: ExtensionTab }) {
   const { t } = usePreferences()
-  const [tab, setTab] = useState<ExtensionTab>('mcp')
+  const [tab, setTab] = useState<ExtensionTab>(initialTab ?? 'mcp')
   const tabs: Array<{ id: ExtensionTab; label: string; count?: number }> = [
     { id: 'mcp', label: 'MCP', count: Object.keys(parseMcp(snapshot.mcpJson)).length },
     { id: 'skills', label: 'Skills', count: snapshot.userSkills.length },
@@ -901,19 +900,49 @@ function ProjectHooksManager() {
 
 function ConfigurationEditor({ snapshot, onSnapshot }: { snapshot: ConfigurationSnapshot; onSnapshot: (snapshot: ConfigurationSnapshot) => void }) {
   const { locale, t } = usePreferences()
+  const english = locale === 'en-US'
   const [target, setTarget] = useState<ConfigurationTarget | 'hooks'>('config')
+  const [draftByTarget, setDraftByTarget] = useState<Partial<Record<ConfigurationTarget, string>>>({})
   const content = target === 'config' ? snapshot.configToml : target === 'mcp' ? snapshot.mcpJson : target === 'instructions' ? snapshot.agentsMarkdown : ''
-  const [draft, setDraft] = useState(content)
+  const draft = target === 'hooks' ? '' : draftByTarget[target] ?? content
   const [status, setStatus] = useState('已连接磁盘监听')
-  useEffect(() => { setDraft(content); setStatus('已从磁盘同步') }, [content])
   const dirty = target !== 'hooks' && draft !== content
+  const editableTarget: ConfigurationTarget | null = target === 'hooks' ? null : target
+  useEffect(() => {
+    // 磁盘推送新内容时不得静默覆盖未保存草稿；保留编辑并提示冲突。
+    if (!editableTarget) return
+    setDraftByTarget((previous) => {
+      const saved = previous[editableTarget]
+      if (saved === undefined || saved === content) return previous
+      setStatus(english ? 'Disk changed while editing — your unsaved draft is kept.' : '磁盘内容已变化，未保存的编辑已保留。')
+      return previous
+    })
+  }, [content, editableTarget, english])
   const save = () => {
     if (target === 'hooks') return
     setStatus('保存并校验…')
     void window.api?.configuration.save({ target, content: draft }).then((result) => {
       if (!result?.ok || !result.snapshot) { setStatus(result?.error ?? '保存失败'); return }
-      onSnapshot(result.snapshot); setStatus('已写入磁盘')
+      onSnapshot(result.snapshot)
+      // 保存成功后回到“跟随磁盘”状态。
+      setDraftByTarget((previous) => {
+        const next = { ...previous }
+        delete next[target]
+        return next
+      })
+      setStatus('已写入磁盘')
     })
+  }
+  const switchTarget = (next: ConfigurationTarget | 'hooks') => {
+    if (next === target) return
+    if (dirty && !window.confirm(english ? 'Discard unsaved changes to this file?' : '当前文件有未保存的修改，确定丢弃并切换？')) return
+    const previousTarget: ConfigurationTarget | null = target === 'hooks' ? null : target
+    setDraftByTarget((previous) => {
+      const nextDrafts = { ...previous }
+      if (previousTarget) delete nextDrafts[previousTarget]
+      return nextDrafts
+    })
+    setTarget(next)
   }
   const meta: Record<ConfigurationTarget | 'hooks', { label: string; note: string }> = {
     config: { label: 'config.toml', note: 'Provider、模型与 Kimi Code 运行参数' },
@@ -922,7 +951,7 @@ function ConfigurationEditor({ snapshot, onSnapshot }: { snapshot: Configuration
     hooks: { label: 'Hooks', note: '按项目管理生命周期命令、匹配规则与启停状态' }
   }
   const targets = Object.keys(meta) as Array<ConfigurationTarget | 'hooks'>
-  return <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}><PanelTitle eyebrow="Disk Source of Truth" title={t('配置文件')} note={t('本地文件与编辑器双向热同步；项目 Hooks 独立存储')} actions={target === 'hooks' ? <StatusLine>{t('PROJECT SCOPED')}</StatusLine> : <><StatusLine error={status.includes('失败')}>{dirty ? t('未保存改动') : status}</StatusLine><button style={buttonStyle} onClick={() => void window.api?.configuration.open(target)}>{t('系统中打开')}</button><button style={{ ...buttonStyle, color: 'var(--moonlight)' }} disabled={!dirty} onClick={save}>{t('保存')}</button></>} /><div style={{ minHeight: 52, padding: '0 18px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 7 }}>{targets.map((id) => <button key={id} onClick={() => setTarget(id)} style={{ padding: '6px 9px', borderRadius: 6, border: `1px solid ${target === id ? 'var(--line-hi)' : 'transparent'}`, background: target === id ? 'var(--regolith)' : 'transparent', color: target === id ? 'var(--moonlight)' : 'var(--faint)', fontSize: 11 }}>{meta[id].label}</button>)}<span className="mono" style={{ marginLeft: 'auto', maxWidth: '46%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: 'var(--ghost)' }}>{target === 'hooks' ? '.farside/hooks.json' : snapshot.paths[target]}</span></div>{target === 'hooks' ? <div style={{ flex: 1, minHeight: 0 }}><ProjectHooksManager /></div> : <div style={{ flex: 1, minHeight: 0, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}><div style={{ display: 'flex', alignItems: 'center' }}><span style={{ fontSize: 11, color: 'var(--faint)' }}>{t(meta[target].note)}</span><span className="mono" style={{ marginLeft: 'auto', fontSize: 9.5, color: 'var(--ghost)' }}>LIVE · {new Date(snapshot.updatedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div><textarea value={draft} onChange={(event) => setDraft(event.target.value)} spellCheck={false} style={{ flex: 1, minHeight: 0, width: '100%', resize: 'none', padding: 13, border: '1px solid var(--line)', borderRadius: 7, background: 'var(--mare)', color: 'var(--dust)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.65, outline: 'none' }} /></div>}</div>
+  return <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}><PanelTitle eyebrow="Disk Source of Truth" title={t('配置文件')} note={t('本地文件与编辑器双向热同步；项目 Hooks 独立存储')} actions={target === 'hooks' ? <StatusLine>{t('PROJECT SCOPED')}</StatusLine> : <><StatusLine error={status.includes('失败')}>{dirty ? t('未保存改动') : status}</StatusLine><button style={buttonStyle} onClick={() => void window.api?.configuration.open(target)}>{t('系统中打开')}</button><button style={{ ...buttonStyle, color: 'var(--moonlight)' }} disabled={!dirty} onClick={save}>{t('保存')}</button></>} /><div style={{ minHeight: 52, padding: '0 18px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 7 }}>{targets.map((id) => <button key={id} onClick={() => switchTarget(id)} style={{ padding: '6px 9px', borderRadius: 6, border: `1px solid ${target === id ? 'var(--line-hi)' : 'transparent'}`, background: target === id ? 'var(--regolith)' : 'transparent', color: target === id ? 'var(--moonlight)' : 'var(--faint)', fontSize: 11 }}>{meta[id].label}</button>)}<span className="mono" style={{ marginLeft: 'auto', maxWidth: '46%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: 'var(--ghost)' }}>{target === 'hooks' ? '.farside/hooks.json' : snapshot.paths[target]}</span></div>{target === 'hooks' ? <div style={{ flex: 1, minHeight: 0 }}><ProjectHooksManager /></div> : <div style={{ flex: 1, minHeight: 0, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}><div style={{ display: 'flex', alignItems: 'center' }}><span style={{ fontSize: 11, color: 'var(--faint)' }}>{t(meta[target].note)}</span><span className="mono" style={{ marginLeft: 'auto', fontSize: 9.5, color: 'var(--ghost)' }}>LIVE · {new Date(snapshot.updatedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div><textarea value={draft} onChange={(event) => { if (editableTarget) setDraftByTarget((previous) => ({ ...previous, [editableTarget]: event.target.value })) }} spellCheck={false} style={{ flex: 1, minHeight: 0, width: '100%', resize: 'none', padding: 13, border: '1px solid var(--line)', borderRadius: 7, background: 'var(--mare)', color: 'var(--dust)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.65, outline: 'none' }} /></div>}</div>
 }
 
 function ConnectionPanel() {
@@ -1274,11 +1303,23 @@ function AboutPanel({ info }: { info: AppInfo | null }) {
 export function SettingsView() {
   const { t } = usePreferences()
   const [section, setSection] = useState<SettingsSection>(() => new URLSearchParams(window.location.search).get('shot') === 'settings-light' ? 'general' : 'account')
+  const settingsRequest = useFarsideStore((state) => state.settingsRequest)
+  const [extensionTab, setExtensionTab] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<ConfigurationSnapshot>(EMPTY_SNAPSHOT)
   const [configError, setConfigError] = useState('')
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [cli, setCli] = useState<CliStatus | null>(null)
   const hasApi = typeof window !== 'undefined' && window.api != null
+
+  // 斜杠命令/命令面板可以深链到指定分区（如 /plugins → 扩展中心）。
+  useEffect(() => {
+    if (!settingsRequest) return
+    if (NAV.some((item) => item.id === settingsRequest.section)) {
+      setSection(settingsRequest.section as SettingsSection)
+      setExtensionTab(settingsRequest.tab ?? null)
+    }
+    useFarsideStore.setState({ settingsRequest: null })
+  }, [settingsRequest])
 
   useEffect(() => {
     const api = window.api
@@ -1302,7 +1343,7 @@ export function SettingsView() {
       <div style={{ height: 64, flexShrink: 0, padding: '0 20px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center' }}><div><h1 style={{ margin: 0, fontSize: 18, fontWeight: 500, color: 'var(--moonlight)' }}>{t('设置控制中心')}</h1><p style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--faint)' }}>{t('账户、扩展与磁盘配置分区管理')}</p></div><div className="mono" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, fontSize: 9.5, color: configError ? 'var(--redshift)' : 'var(--ghost)' }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: configError ? 'var(--redshift)' : 'var(--moonlight)' }} />{configError || 'CONFIG WATCH ACTIVE'}</div></div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <nav style={{ width: 196, flexShrink: 0, padding: 10, borderRight: '1px solid var(--line)', background: 'color-mix(in srgb, var(--regolith) 34%, var(--void))', overflowY: 'auto' }}>{NAV.map((item) => <button key={item.id} onClick={() => setSection(item.id)} style={{ width: '100%', minHeight: 52, padding: '8px 9px', marginBottom: 3, border: `1px solid ${section === item.id ? 'var(--line-hi)' : 'transparent'}`, borderRadius: 7, background: section === item.id ? 'var(--regolith)' : 'transparent', textAlign: 'left', display: 'grid', gridTemplateColumns: '23px 1fr', columnGap: 8 }}><span className="mono" style={{ gridRow: '1 / 3', fontSize: 9.5, paddingTop: 2, color: section === item.id ? 'var(--moonlight)' : 'var(--ghost)' }}>{item.mark}</span><span style={{ fontSize: 11.5, color: section === item.id ? 'var(--moonlight)' : 'var(--dust)' }}>{t(item.label)}</span><span style={{ marginTop: 3, fontSize: 9.5, color: 'var(--faint)' }}>{t(item.note)}</span></button>)}</nav>
-        <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>{section === 'account' ? <AccountPanel info={info} /> : null}{section === 'profile' ? <ProfilePanel /> : null}{section === 'extensions' ? <ExtensionCenter snapshot={snapshot} onSnapshot={setSnapshot} /> : null}{section === 'configuration' ? <ConfigurationEditor snapshot={snapshot} onSnapshot={setSnapshot} /> : null}{section === 'connections' ? <ConnectionPanel /> : null}{section === 'general' ? <GeneralPanel info={info} cli={cli} hasApi={hasApi} /> : null}{section === 'about' ? <AboutPanel info={info} /> : null}</section>
+        <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>{section === 'account' ? <AccountPanel info={info} /> : null}{section === 'profile' ? <ProfilePanel /> : null}{section === 'extensions' ? <ExtensionCenter key={extensionTab ?? 'default'} snapshot={snapshot} onSnapshot={setSnapshot} initialTab={extensionTab as ExtensionTab | undefined} /> : null}{section === 'configuration' ? <ConfigurationEditor snapshot={snapshot} onSnapshot={setSnapshot} /> : null}{section === 'connections' ? <ConnectionPanel /> : null}{section === 'general' ? <GeneralPanel info={info} cli={cli} hasApi={hasApi} /> : null}{section === 'about' ? <AboutPanel info={info} /> : null}</section>
       </div>
     </div>
   )

@@ -15,6 +15,7 @@ import type {
   TrajectoryEvent
 } from '@shared/types'
 import { MODELS } from '@shared/types'
+import { UNSUPPORTED_SLASH_COMMANDS } from '../components/composer/slashCommands'
 import { MOCK_APPROVAL, MOCK_SESSIONS } from './mock'
 
 export type RailView = 'sessions' | 'goals' | 'settings'
@@ -49,6 +50,13 @@ interface FarsideState {
   initialized: boolean
   connected: boolean
   authReady: boolean | null
+  /** Provider 未配置时的引导层；用户可选择“稍后再说”直接进入首页。 */
+  onboardingDismissed: boolean
+  dismissOnboarding(): void
+  reopenOnboarding(): void
+  /** 从命令面板/斜杠命令深链到设置页的分区；由 SettingsView 消费后清空。 */
+  settingsRequest: { section: string; tab?: string; ts: number } | null
+  openSettings(section: string, tab?: string): void
   account: AccountState | null
   refreshAccount(): Promise<void>
   logoutAccount(): Promise<void>
@@ -261,6 +269,10 @@ function composerPatchForSession(
   }
 }
 
+function readOnboardingDismissed(): boolean {
+  return localStorage.getItem('farside:onboarding-dismissed') === '1'
+}
+
 function mockProjects(): WorkspaceInfo[] {
   return [...new Map(MOCK_SESSIONS.map((session) => [session.cwd, session])).values()].map((session, index) => ({
     id: `mock-workspace-${index + 1}`,
@@ -356,6 +368,17 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   initialized: false,
   connected: false,
   authReady: null,
+  onboardingDismissed: readOnboardingDismissed(),
+  dismissOnboarding: () => {
+    localStorage.setItem('farside:onboarding-dismissed', '1')
+    set({ onboardingDismissed: true })
+  },
+  reopenOnboarding: () => {
+    localStorage.removeItem('farside:onboarding-dismissed')
+    set({ onboardingDismissed: false })
+  },
+  settingsRequest: null,
+  openSettings: (section, tab) => set({ view: 'settings', settingsRequest: { section, ...(tab ? { tab } : {}), ts: Date.now() } }),
   account: null,
   projects: [],
   pinnedSessionIds: readPreference('pinned-sessions'),
@@ -424,6 +447,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       const accountResult = await bridge.account.get()
       const account = accountResult.account ?? null
       if (!accountResult.ok) {
+        // 账户服务不可用 ≠ 未配置 Provider：保持 authReady 未知态，
+        // 让 EmptyState 展示错误与“重新建立链路”，而不是弹出引导层。
         set({
           sessions: [],
           activeSessionId: null,
@@ -431,7 +456,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           questionQueue: [],
           initialized: true,
           connected: false,
-          authReady: false,
+          authReady: null,
           account,
           quota: quotaFromAccount(account),
           lastError: accountResult.error ?? '账户服务暂不可用，请重试'
@@ -439,11 +464,9 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         return
       }
       if (accountResult.ok && account && !account.configured) {
+        // 未配置 Provider 只是“尚未登录”，不是错误：历史会话照常加载，
+        // 引导层可跳过，用户随时可从设置或空状态页完成配置。
         set({
-          sessions: [],
-          activeSessionId: null,
-          approvalQueue: [],
-          questionQueue: [],
           initialized: true,
           connected: false,
           authReady: false,
@@ -451,7 +474,6 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           quota: quotaFromAccount(account),
           lastError: null
         })
-        return
       }
       const [result, workspaceResult] = await Promise.all([api.initialize(), bridge.workspace.list()])
       const activeSessions = result.sessions
@@ -468,7 +490,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         questionQueue: result.questions,
         initialized: true,
         connected: result.ok,
-        authReady: account?.configured ?? result.authReady ?? null,
+        // 未配置 Provider 时保持 authReady=false 驱动引导层；服务端未上报时为未知态。
+        authReady: account ? (account.configured && (result.authReady ?? true)) : (result.authReady ?? null),
         account,
         ...(initialComposer ?? { model: account?.activeModel ?? get().model }),
         composerBySession: initialSession && initialComposer ? { [initialSession.id]: initialComposer } : {},
@@ -485,7 +508,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         approvalQueue: visualPreview ? [MOCK_APPROVAL] : [],
         initialized: true,
         connected: false,
-        authReady: visualPreview ? true : false,
+        // 初始化链路异常（服务未就绪等）不应被误读为“未配置 Provider”。
+        authReady: visualPreview ? true : null,
         lastError: visualPreview
           ? null
           : error instanceof Error
@@ -517,6 +541,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     set({
       account: result.account ?? null,
       authReady: false,
+      // 显式退出登录后重新展示引导层，方便直接切换 Provider。
+      onboardingDismissed: false,
       sessions: [],
       activeSessionId: null,
       composerBySession: {},
@@ -918,15 +944,17 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     ) return
     set({ undoSelectorOpen: false })
     void (async () => {
-      const fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count })
-      if (!fileResult.ok) {
-        set({ lastError: fileResult.error ?? '文件改动撤销失败' })
-        return
-      }
+      // 先回退会话轮次：这一步失败时文件与轨迹都保持原状，不会出现
+      // “文件已回滚、轨迹却还在”的不可逆半完成状态。
       const result = await api.runSessionAction({ sessionId, action: 'undo', count })
       if (!result.ok) {
         set({ lastError: result.error ?? '请求回退失败' })
         return
+      }
+      // 会话已回退，文件回滚失败时基线仍保留，自动重试一次。
+      let fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count })
+      if (!fileResult.ok) {
+        fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count })
       }
       const loaded = await api.loadSession(sessionId)
       if (!loaded.ok || !loaded.session) {
@@ -935,7 +963,9 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       }
       set((current) => ({
         sessions: upsertSession(current.sessions, resolveSessionProject(loaded.session as Session, current.projects)),
-        lastError: null
+        lastError: fileResult.ok
+          ? null
+          : (fileResult.error ?? '文件改动撤销失败；会话已回退，请通过 git 或「本轮改动」面板核对文件状态')
       }))
     })()
   },
@@ -952,15 +982,15 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       return
     }
     void (async () => {
-      const fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count: 1 })
-      if (!fileResult.ok) {
-        set({ lastError: fileResult.error ?? '本轮文件改动撤销失败' })
-        return
-      }
+      // 与 undoTurns 相同的两段式顺序：先撤会话轮次（失败即原状），再回滚文件。
       const result = await api.runSessionAction({ sessionId, action: 'undo', count: 1 })
       if (!result.ok) {
         set({ lastError: result.error ?? '重新编辑上一轮失败' })
         return
+      }
+      let fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count: 1 })
+      if (!fileResult.ok) {
+        fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count: 1 })
       }
       const loaded = await api.loadSession(sessionId)
       set((current) => ({
@@ -968,7 +998,9 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           ? { sessions: upsertSession(current.sessions, resolveSessionProject(loaded.session as Session, current.projects)) }
           : {}),
         ...composerPatch(current, { draft: prompt.text }),
-        lastError: loaded.ok ? null : loaded.error ?? '上一轮已撤回，但会话刷新失败'
+        lastError: loaded.ok
+          ? (fileResult.ok ? null : (fileResult.error ?? '文件改动撤销失败；会话已回退，请通过 git 或「本轮改动」面板核对文件状态'))
+          : loaded.error ?? '上一轮已撤回，但会话刷新失败'
       }))
     })()
   },
@@ -1027,12 +1059,24 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
               ? 'kimi-for-coding-highspeed'
               : arg as ModelId || null
         if (picked) {
+          // 校验模型 ID 确实在当前账户可用列表中，避免任意字符串静默生效。
+          const known = get().account?.models ?? []
+          if (known.length > 0 && !known.some((item) => item.id === picked)) {
+            get().setDraft('')
+            set({ lastError: `未知模型「${picked}」。可用模型：${known.map((item) => item.id).join('、')}` })
+            return
+          }
           get().setDraft('')
           get().setModel(picked)
         }
         return
       }
       if (name === 'exit') {
+        get().setDraft('')
+        const busy = get().sessions.some(
+          (session) => session.phase !== 'new' || get().promptQueues[session.id]?.length
+        )
+        if (busy && !window.confirm('仍有会话在运行或排队中，退出会中断任务。确定关闭 Farside？')) return
         void window.api?.window.close()
         return
       }
@@ -1048,7 +1092,39 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       }
       if (name === 'mcp') {
         get().setDraft('')
-        set({ view: 'settings' })
+        get().openSettings('extensions')
+        return
+      }
+      if (name === 'plugins') {
+        get().setDraft('')
+        get().openSettings('extensions')
+        return
+      }
+      if (name === 'mcp-config' || name === 'update-config') {
+        get().setDraft('')
+        get().openSettings('configuration')
+        return
+      }
+      if (name === 'login' || name === 'provider') {
+        get().setDraft('')
+        // 桌面端登录与 Provider 切换集中在设置的账户页完成。
+        get().openSettings('account')
+        return
+      }
+      if (name === 'logout') {
+        get().setDraft('')
+        void get().logoutAccount()
+        return
+      }
+      if (name === 'theme') {
+        get().setDraft('')
+        window.dispatchEvent(new CustomEvent('farside:toggle-theme'))
+        return
+      }
+      if (UNSUPPORTED_SLASH_COMMANDS.has(name)) {
+        // 明确告知未支持，而不是把命令文本当作提示词静默上送给模型。
+        get().setDraft('')
+        set({ lastError: `/${name} 在 Farside 桌面端暂无对应入口，请改用设置页或命令面板（⌘K）。` })
         return
       }
       if (state.activeSessionId && name === 'fork') {
@@ -1288,6 +1364,12 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
             selectedLabel !== 'Reject'
           ) {
             set((state) => composerPatchForSession(state, approval.sessionId, { planMode: false }))
+          }
+          // 计划审批结束后回收自动打开的计划预览，避免面板停留在旧计划上。
+          if (approval.planReview && selectedLabel !== 'Revise') {
+            set((state) => (
+              state.preview?.path === approval.planReview?.path ? { preview: null } : {}
+            ))
           }
           return
         }

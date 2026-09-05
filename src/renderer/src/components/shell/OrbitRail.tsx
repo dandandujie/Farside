@@ -145,7 +145,15 @@ export function OrbitRail() {
 
       {active ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7, marginBottom: 8 }}>
-          <FuelGauge used={active.contextTokens} size={34} strokeWidth={2.5} showLabel={false} />
+          <FuelGauge
+            used={active.contextTokens}
+            total={
+              account?.models.find((item) => item.id === active.model)?.contextWindow ?? 1_000_000
+            }
+            size={34}
+            strokeWidth={2.5}
+            showLabel={false}
+          />
           <span
             className="mono"
             style={{

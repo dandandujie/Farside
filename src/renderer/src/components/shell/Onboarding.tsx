@@ -4,12 +4,18 @@ import { useFarsideStore } from '../../lib/store'
 import { AccountSetup } from '../settings/AccountSetup'
 import { usePreferences } from '../../lib/preferences'
 
-/** 首次启动账户设置：三种 Provider 都在此完成，不强制使用 OAuth。 */
+/**
+ * Provider 引导层：仅在“未配置任何链路且用户未选择稍后处理”时展示。
+ * 配置不是进入首页的前提——用户可以跳过，稍后在设置中完成。
+ */
 export function Onboarding() {
   const { locale } = usePreferences()
+  const english = locale === 'en-US'
   const authReady = useFarsideStore((state) => state.authReady)
+  const onboardingDismissed = useFarsideStore((state) => state.onboardingDismissed)
+  const dismissOnboarding = useFarsideStore((state) => state.dismissOnboarding)
 
-  if (authReady !== false) return null
+  if (authReady !== false || onboardingDismissed) return null
 
   return (
     <div
@@ -49,15 +55,31 @@ export function Onboarding() {
             >
               FARSIDE
             </span>
-            <span className="mono" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--faint)' }}>
+            <button
+              type="button"
+              onClick={dismissOnboarding}
+              style={{
+                marginLeft: 'auto',
+                fontSize: 11.5,
+                color: 'var(--dust)',
+                border: '1px solid var(--line)',
+                borderRadius: 6,
+                padding: '5px 11px'
+              }}
+            >
+              {english ? 'Skip for now' : '暂不配置，直接进入'}
+            </button>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>
               FIRST CONTACT · 01
             </span>
           </div>
           <h1 style={{ margin: '24px 0 7px', fontSize: 20, fontWeight: 500 }}>
-            {locale === 'en-US' ? 'Choose your Kimi connection' : '选择你的 Kimi 链路'}
+            {english ? 'Connect a Kimi provider' : '连接你的 Kimi 链路'}
           </h1>
           <p style={{ margin: '0 0 18px', fontSize: 12.5, lineHeight: 1.7, color: 'var(--dust)' }}>
-            {locale === 'en-US' ? 'Connect with Kimi OAuth, the Moonshot official API, or an OpenAI-compatible Kimi service. You can switch later in Settings.' : '可使用 Kimi 会员账户、Moonshot 官方 API，或 OpenAI 格式的第三方 Kimi 服务。之后仍可在设置中切换。'}
+            {english
+              ? 'Sign in with Kimi OAuth, the Moonshot official API, or an OpenAI-compatible Kimi service. This step is optional — you can also configure it later in Settings.'
+              : '可使用 Kimi 会员账户、Moonshot 官方 API，或 OpenAI 格式的第三方 Kimi 服务。此步骤可以跳过，之后随时能在设置中完成。'}
           </p>
           <AccountSetup />
         </div>

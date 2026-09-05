@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react'
 
 export function usePersistentWidth(key: string, initial: number, min: number, max: number) {
   const [width, setWidth] = useState(() => {
-    const saved = Number(localStorage.getItem(`farside:width:${key}`))
-    return Number.isFinite(saved) ? Math.min(max, Math.max(min, saved)) : initial
+    const raw = localStorage.getItem(`farside:width:${key}`)
+    // 键不存在时 Number(null) === 0 会把首次宽度错压到 min；只有存过合法值才采用。
+    if (raw === null) return initial
+    const saved = Number(raw)
+    return Number.isFinite(saved) && saved > 0 ? Math.min(max, Math.max(min, saved)) : initial
   })
 
   useEffect(() => {

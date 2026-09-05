@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { WorkspaceInfo } from '@shared/ipc'
 import type { Session } from '@shared/types'
 import type { MoonPhase as MoonPhaseValue } from '@shared/types'
@@ -60,6 +60,7 @@ function projectRootLabel(root: string): string {
 function Menu({ children }: { children: ReactNode }) {
   return (
     <div
+      data-context-menu
       onClick={(event) => event.stopPropagation()}
       style={{
         position: 'absolute',
@@ -159,7 +160,7 @@ function ProjectHeader({
           </span>
         </span>
       )}
-      <button aria-label={`${project.name} 项目操作`} onClick={() => setMenuOpen(!menuOpen)} style={{ width: 24, height: 22, color: 'var(--faint)', fontSize: 15 }}>···</button>
+      <button aria-label={`${project.name} 项目操作`} data-menu-anchor onClick={() => setMenuOpen(!menuOpen)} style={{ width: 24, height: 22, color: 'var(--faint)', fontSize: 15 }}>···</button>
       {menuOpen ? (
         <Menu>
           <MenuItem label={pinned ? (english ? 'Unpin project' : '取消置顶') : (english ? 'Pin project' : '置顶项目')} onClick={() => { togglePinProject(project.id); setMenuOpen(false) }} />
@@ -200,6 +201,28 @@ export function SessionList() {
   const [renamingSession, setRenamingSession] = useState<string | null>(null)
   const [renamingProject, setRenamingProject] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
+
+  // ··· 菜单点外部或按 Escape 时收起，避免菜单挂在列表上。
+  useEffect(() => {
+    if (!openMenu) return
+    const close = (event: Event) => {
+      if (event instanceof PointerEvent || event.type === 'pointerdown') {
+        const target = event.target as Node | null
+        // 菜单本体与 ··· 开关按钮内部的 pointerdown 不关闭（开关由 click 自行切换）。
+        if (target instanceof Element && target.closest('[data-context-menu], [data-menu-anchor]')) return
+      }
+      setOpenMenu(null)
+    }
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenMenu(null)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onEscape)
+    }
+  }, [openMenu])
 
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -254,14 +277,20 @@ export function SessionList() {
             <span style={{ marginLeft: 'auto', color: status.color }}>{status.label}</span>
           </span>
         </span>
-        {!renaming ? <button aria-label="会话操作" onClick={(event) => { event.stopPropagation(); setOpenMenu(openMenu === `s:${session.id}` ? null : `s:${session.id}`) }} style={{ width: 22, height: 20, color: 'var(--faint)', fontSize: 14 }}>···</button> : null}
+        {!renaming ? <button aria-label="会话操作" data-menu-anchor onClick={(event) => { event.stopPropagation(); setOpenMenu(openMenu === `s:${session.id}` ? null : `s:${session.id}`) }} style={{ width: 22, height: 20, color: 'var(--faint)', fontSize: 14 }}>···</button> : null}
         {openMenu === `s:${session.id}` ? (
           <Menu>
             <MenuItem label={pinnedSessions.includes(session.id) ? (english ? 'Unpin' : '取消置顶') : (english ? 'Pin session' : '置顶会话')} onClick={() => { togglePinSession(session.id); setOpenMenu(null) }} />
             <MenuItem label={t('重命名')} onClick={() => { setRenameDraft(session.title); setRenamingSession(session.id); setOpenMenu(null) }} />
             <MenuItem label={english ? 'Fork session' : '分叉会话'} onClick={() => { forkSession(session.id); setOpenMenu(null) }} />
             <MenuItem label={english ? 'Export session' : '导出会话'} onClick={() => { exportSession(session.id); setOpenMenu(null) }} />
-            <MenuItem danger label={english ? 'Archive session' : '归档会话'} onClick={() => { archiveSession(session.id); setOpenMenu(null) }} />
+            <MenuItem danger label={english ? 'Archive session' : '归档会话'} onClick={() => {
+              setOpenMenu(null)
+              // 归档是会话在界面上的唯一“移除”路径，误点即从列表消失，必须确认。
+              if (window.confirm(english ? `Archive “${session.title}”? It will disappear from this list.` : `归档会话“${session.title}”？归档后会从列表中移除。`)) {
+                archiveSession(session.id)
+              }
+            }} />
           </Menu>
         ) : null}
       </div>

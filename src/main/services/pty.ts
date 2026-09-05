@@ -52,7 +52,9 @@ function pickShell(): string {
 
 /** 管道模式下给 shell 一个交互态提示符（powershell 不需要参数） */
 function shellArgs(shell: string): string[] {
-  return /ba?sh(\.exe)?$/i.test(shell) ? ['-i'] : []
+  // zsh 同样需要 -i：管道后端没有 tty，非交互 zsh 会把 stdin 当脚本
+  // 逐行等待 \n，用户按 Enter（\r）永远不会有任何响应。
+  return /^(?:ba|z)?sh(\.exe)?$/i.test(shell) ? ['-i'] : []
 }
 
 /**
@@ -158,7 +160,9 @@ export class PtyService {
       shell,
       write: (data) => {
         try {
-          child.stdin?.write(data)
+          // 管道没有 tty 行规的 CR→NL 转换：xterm 的 Enter 发送 \r，
+          // 而 zsh/bash 的交互输入只认 \n。统一规整（\r\n 先折叠避免双换行）。
+          child.stdin?.write(data.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
         } catch {
           // 进程已退出、管道已断：丢弃本次输入
         }

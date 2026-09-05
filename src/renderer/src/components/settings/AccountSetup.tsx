@@ -90,15 +90,21 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
 
   useEffect(() => {
     if (!pending || !window.api?.agent) return
+    // 手机端授权常比网络抖动慢半拍：连续失败若干次内继续等，不立刻放弃。
+    let failures = 0
     const timer = window.setInterval(() => {
       void window.api!.agent.pollLogin().then((result) => {
         if (!result.ok) {
-          setPending(false)
-          setVerificationUri(null)
-          setUserCode(null)
-          setLocalError(result.error ?? '登录状态查询失败')
+          failures += 1
+          if (failures >= 3) {
+            setPending(false)
+            setVerificationUri(null)
+            setUserCode(null)
+            setLocalError(result.error ?? '登录状态查询失败')
+          }
           return
         }
+        failures = 0
         if (result.ready) {
           setPending(false)
           setVerificationUri(null)
@@ -247,8 +253,17 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
             </div>
             <button
               type="button"
-              disabled={pending}
-              onClick={() => void startOAuth()}
+              disabled={pending && !verificationUri}
+              onClick={() => {
+                if (pending) {
+                  // 等待授权期间允许取消轮询，用户可稍后重新发起。
+                  setPending(false)
+                  setVerificationUri(null)
+                  setUserCode(null)
+                  return
+                }
+                void startOAuth()
+              }}
               style={{
                 flexShrink: 0,
                 padding: '8px 13px',
@@ -260,7 +275,7 @@ export function AccountSetup({ compact = false }: { compact?: boolean }) {
             >
               {pending
                 ? verificationUri
-                  ? (english ? 'Waiting…' : '等待授权…')
+                  ? (english ? 'Cancel waiting' : '取消等待')
                   : (english ? 'Starting service…' : '正在启动服务…')
                 : activeKind === 'kimi-oauth'
                   ? (english ? 'Refresh sign-in' : '刷新登录状态')

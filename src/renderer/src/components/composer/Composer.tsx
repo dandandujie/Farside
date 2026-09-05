@@ -154,6 +154,7 @@ export function Composer() {
   }
 
   const handleSend = () => {
+    if (!activeSessionId) return
     if (!draft.trim() && attachments.length === 0) return
     send(refs.map((ref) => ref.path))
     setRefs([])
@@ -275,6 +276,9 @@ export function Composer() {
 
     if (e.key === 'Escape' && activeSession?.phase !== 'new') {
       e.preventDefault()
+      // Composer 内的 Esc 是唯一的“中断”入口；阻止冒泡到 document，
+      // 避免 App 全局监听再次 abort 造成重复请求。
+      e.nativeEvent.stopImmediatePropagation()
       abortCurrent()
       return
     }
