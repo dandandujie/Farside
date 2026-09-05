@@ -18,7 +18,7 @@ test('唯一 current runtime 完整锁定六个平台', () => {
   const lock = validateRuntimeLock(copyLock())
   const { name, runtime } = getCurrentRuntime(lock)
   assert.equal(name, 'current')
-  assert.equal(runtime.version, '0.31.1')
+  assert.equal(runtime.version, '0.39.1')
   assert.deepEqual(Object.keys(runtime.artifacts).sort(), [...RUNTIME_TARGETS].sort())
 })
 

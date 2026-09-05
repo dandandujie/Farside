@@ -20,6 +20,7 @@ import { ConfigurationService, CONFIGURATION_PATHS } from './services/configurat
 import { ConnectionService } from './services/connection'
 import { UpdateService } from './services/update'
 import { isPathWithin, isSafeOpenTarget, isTrustedRendererUrl } from './security'
+import { markRendererConfirmedClose } from './services/close-guard'
 
 const ptyService = new PtyService()
 const serverService = new ServerService()
@@ -73,9 +74,13 @@ async function openWorkspacePath(target: unknown): Promise<{ ok: boolean; error?
   }
 }
 
+/** 主进程侧的“任务运行中”判定，供窗口关闭守卫使用。 */
+export function hasActiveAgentWork(): boolean {
+  return kimiClient.hasActiveWork()
+}
+
 /** 注册全部 IPC handler。窗口控制按事件来源定位窗口，避免持有窗口引用。 */
-export function registerIpcHandlers(): void {
-  if (!configurationWatchStarted) {
+export function registerIpcHandlers(): void {  if (!configurationWatchStarted) {
     configurationWatchStarted = true
     void configurationService.watch((snapshot) => {
       for (const win of BrowserWindow.getAllWindows()) {
@@ -116,7 +121,10 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.WindowClose, (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close()
+    const win = BrowserWindow.fromWebContents(event.sender)
+    // 渲染层已就“任务运行中”完成确认；原生关闭路径由窗口 close 守卫兜底。
+    markRendererConfirmedClose(win)
+    win?.close()
   })
 
   ipcMain.handle(IPC.WindowIsMaximized, (event): boolean => {
@@ -228,14 +236,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.ConfigurationGet, () => configurationService.get())
-  ipcMain.handle(IPC.ConfigurationSave, async (_event, input) => {
-    const result = await configurationService.save(input)
-    if (result.ok && input.target === 'config') {
-      // Kimi Core 自身也监听 config.toml；显式 reload 让设置页保存后的生效时点确定。
-      await kimiClient.reloadRuntimeConfiguration()
-    }
-    return result
-  })
+  ipcMain.handle(IPC.ConfigurationSave, (_event, input) => configurationService.save(input))
   ipcMain.handle(IPC.ConfigurationManage, async (_event, input) => {
     if (input.kind !== 'plugin') return configurationService.manage(input)
     const action = await kimiClient.managePlugin(input)

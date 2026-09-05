@@ -142,6 +142,18 @@ interface RemoteProvider {
   models?: string[]
 }
 
+/**
+ * GET /api/v1/auth 摘要。0.39 起移除了 `ready` 字段，改为
+ * `{ models_ready, providers_count, managed_provider }`（见上游
+ * app/authLegacy/authLegacy.ts 的 authSummarySchema）。
+ */
+interface AuthSummaryWire {
+  ready?: boolean
+  models_ready?: boolean
+  providers_count?: number
+  managed_provider?: { name?: string; status?: string } | null
+}
+
 interface RemoteModel {
   provider: string
   model: string
@@ -815,6 +827,11 @@ export class KimiClientService {
 
   constructor(private readonly server: ServerService) {}
 
+  /** 是否仍有运行中的 Agent 任务；窗口关闭守卫据此拦截静默中断。 */
+  hasActiveWork(): boolean {
+    return this.activeRuns.size > 0
+  }
+
   private bindTurnChanges(session: Session): Session {
     this.turnChanges.bindSession(session.id, session.cwd)
     return session
@@ -1246,6 +1263,21 @@ export class KimiClientService {
     }
   }
 
+  /**
+   * 把 /api/v1/auth 摘要投影为“链路是否就绪”。0.39 移除了现成的 `ready`
+   * 字段后，按上游 AuthLegacyService 的原语义重推：
+   * 至少 1 个 provider、默认模型可解析（models_ready）、managed 未被吊销。
+   */
+  private resolveAuthReady(summary: AuthSummaryWire | null | undefined): boolean {
+    if (!summary) return false
+    const providersCount = typeof summary.providers_count === 'number' ? summary.providers_count : 0
+    return (
+      providersCount >= 1 &&
+      summary.models_ready === true &&
+      summary.managed_provider?.status !== 'revoked'
+    )
+  }
+
   async getAccount(refreshUsage = false): Promise<AccountResult> {
     try {
       if (refreshUsage) {
@@ -1255,7 +1287,7 @@ export class KimiClientService {
         }).catch(() => undefined)
       }
       const [auth, providerData, modelData, config] = await Promise.all([
-        this.request<{ ready?: boolean }>('/api/v1/auth'),
+        this.request<AuthSummaryWire>('/api/v1/auth'),
         this.request<{ items?: RemoteProvider[] }>('/api/v1/providers'),
         this.request<{ items?: RemoteModel[] }>('/api/v1/models'),
         this.request<{
@@ -1298,7 +1330,7 @@ export class KimiClientService {
       }))
       const managedActive = activeProviderId === 'managed:kimi-code'
       const account: AccountState = {
-        configured: auth.ready === true && providers.some((provider) => provider.status === 'connected'),
+        configured: this.resolveAuthReady(auth) && providers.some((provider) => provider.status === 'connected'),
         activeProviderId,
         activeModel: defaultModel,
         providers,
@@ -1449,7 +1481,7 @@ export class KimiClientService {
     try {
       const [remoteSessions, auth] = await Promise.all([
         this.listRemoteSessions(),
-        this.request<{ ready?: boolean }>('/api/v1/auth')
+        this.request<AuthSummaryWire>('/api/v1/auth')
       ])
       const sessions = remoteSessions.map((item) => this.bindTurnChanges(sessionFromRemote(item)))
       for (const item of remoteSessions) {
@@ -1479,7 +1511,7 @@ export class KimiClientService {
           goal = loaded.goal ?? null
         }
       }
-      return { ok: true, sessions, approvals, questions, goal, authReady: auth.ready === true }
+      return { ok: true, sessions, approvals, questions, goal, authReady: this.resolveAuthReady(auth) }
     } catch (error) {
       return {
         ok: false,
@@ -1893,9 +1925,18 @@ export class KimiClientService {
       ) {
         throw new Error('目标控制参数无效')
       }
+      // profile 接口是整体替换 agent_config：先取当前全量配置，
+      // 只追加 goal_control，避免清掉 model / permission 等字段。
+      const current = await this.request<{ agent_config?: UnknownRecord }>(
+        `/api/v1/sessions/${encodeURIComponent(input.sessionId)}/profile`
+      )
+      const agentConfig: UnknownRecord = {
+        ...(isRecord(current.agent_config) ? current.agent_config : {}),
+        goal_control: input.control
+      }
       await this.request(`/api/v1/sessions/${encodeURIComponent(input.sessionId)}/profile`, {
         method: 'POST',
-        body: JSON.stringify({ agent_config: { goal_control: input.control } })
+        body: JSON.stringify({ agent_config: agentConfig })
       })
       const goal = await this.getGoal(input.sessionId)
       this.emit({ kind: 'goal-updated', sessionId: input.sessionId, goal })
@@ -2178,7 +2219,11 @@ export class KimiClientService {
     }
   }
 
-  /** 使用 Kimi Server v2 的官方 PluginService，避免绕过插件校验与 managed 安装事务。 */
+  /**
+   * 使用 Kimi Server 官方 Plugin REST 面（0.39+：POST /api/v1/plugins 与
+   * /api/v1/plugins/{id}:enable|:disable|:remove），避免绕过插件校验与
+   * managed 安装事务。0.31 的 /api/v2 pluginService RPC 从未开放过。
+   */
   async managePlugin(
     input: Extract<ConfigurationManageInput, { kind: 'plugin' }>
   ): Promise<AgentActionResult> {
@@ -2188,7 +2233,7 @@ export class KimiClientService {
       }
       if (input.action === 'install') {
         if (!isBoundedString(input.source, 2_048)) throw new Error('Plugin 来源无效')
-        await this.request('/api/v2/pluginService/installPlugin', {
+        await this.request('/api/v1/plugins', {
           method: 'POST',
           body: JSON.stringify({ source: input.source })
         })
@@ -2196,15 +2241,15 @@ export class KimiClientService {
         if (!isBoundedString(input.id, 512) || typeof input.enabled !== 'boolean') {
           throw new Error('Plugin 状态参数无效')
         }
-        await this.request('/api/v2/pluginService/setPluginEnabled', {
-          method: 'POST',
-          body: JSON.stringify({ id: input.id, enabled: input.enabled })
-        })
+        await this.request(
+          `/api/v1/plugins/${encodeURIComponent(input.id)}:${input.enabled ? 'enable' : 'disable'}`,
+          { method: 'POST', body: JSON.stringify({}) }
+        )
       } else {
         if (!isBoundedString(input.id, 512)) throw new Error('Plugin ID 无效')
-        await this.request('/api/v2/pluginService/removePlugin', {
+        await this.request(`/api/v1/plugins/${encodeURIComponent(input.id)}:remove`, {
           method: 'POST',
-          body: JSON.stringify({ id: input.id })
+          body: JSON.stringify({})
         })
       }
       return { ok: true }
@@ -2212,19 +2257,6 @@ export class KimiClientService {
       return {
         ok: false,
         error: error instanceof Error ? error.message : 'Kimi Plugin 操作失败'
-      }
-    }
-  }
-
-  /** config.toml 写入后立即要求 Kimi Core 重载，不必等待 Server 重启。 */
-  async reloadRuntimeConfiguration(): Promise<AgentActionResult> {
-    try {
-      await this.request('/api/v2/configService/reload', { method: 'POST' })
-      return { ok: true }
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Kimi 配置热加载失败'
       }
     }
   }
@@ -2289,8 +2321,8 @@ export class KimiClientService {
 
   async startLogin(): Promise<AuthFlowResult> {
     try {
-      const auth = await this.request<{ ready?: boolean }>('/api/v1/auth')
-      if (auth.ready === true) {
+      const auth = await this.request<AuthSummaryWire>('/api/v1/auth')
+      if (this.resolveAuthReady(auth)) {
         await this.activateManagedProvider()
         return { ok: true, ready: true, pending: false }
       }
@@ -2323,9 +2355,9 @@ export class KimiClientService {
     try {
       const [flowResult, authResult] = await Promise.allSettled([
         this.request<{ status?: string } | null>('/api/v1/oauth/login'),
-        this.request<{ ready?: boolean }>('/api/v1/auth')
+        this.request<AuthSummaryWire>('/api/v1/auth')
       ])
-      const authReady = authResult.status === 'fulfilled' && authResult.value.ready === true
+      const authReady = authResult.status === 'fulfilled' && this.resolveAuthReady(authResult.value)
       const flowStatus = flowResult.status === 'fulfilled' ? flowResult.value?.status : undefined
       if (!authReady && flowResult.status === 'rejected') throw flowResult.reason
       const state = resolveOAuthLoginState(flowStatus, authReady)

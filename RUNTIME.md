@@ -13,7 +13,7 @@ Farside 只有一套产品版本和一套 Runtime。Kimi Code 是上游核心与
 
 不存在运行时通道切换、缺失产物回退或“官方/自定义”双线选择。`kind` 只记录当前产物的真实来源，不代表可切换产品线。
 
-当前 `current` 已锁定完成适配与 smoke 验证的 0.31.1 官方基线制品。它不会被后续官方 release 直接替换；下一次版本更新必须完成源码适配和自动化验证，并原位更新唯一 `current`。
+当前 `current` 已锁定完成适配与 smoke 验证的 0.39.1 官方基线制品。它不会被后续官方 release 直接替换；下一次版本更新必须完成源码适配和自动化验证，并原位更新唯一 `current`。
 
 ```powershell
 # 使用本机同版本源码构建产物准备开发资源
@@ -107,6 +107,17 @@ npm run runtime:patch:apply -- D:\path\to\kimi-code
 - 前台 `kimi web --no-open`、实例注册文件、`/api/v1/meta` 与 `/api/v1/shutdown` 生命周期不需要新的桌面适配。
 - 上游新增自定义 agent、plugin system prompt、secondary model、非阻塞 TaskOutput、配额快速失败等能力，由 Runtime 提供，不在 Farside 重复实现。
 - 官方六平台 manifest、URL 与 SHA-256 已锁定；darwin-arm64 二进制通过 meta、OpenAPI 路径和启动行为对比，`current` 已原位更新为 0.31.1。
+
+## 0.39.1 适配基线
+
+已完成 Kimi Code 0.31.1 → 0.39.1 的源码与公开协议差异审查。候选源码固定为 tag `@moonshot-ai/kimi-code@0.39.1`、commit `5efca0c3116743855c28426000073bfe34a4862f`；详细决策见 `evaluations/kimi-code-0.39.1-adaptation.md`。
+
+审查结论：
+
+- `/api/v1` 无路径删除，schema 全部增量兼容；`/api/v1/ws` 协议版本仍为 2，六项 capability 不变；`kimi web --no-open` 生命周期、实例注册文件与持久化布局不变。
+- 两处适配均为替换 0.31 上从未开放（404）的 `/api/v2` 服务 RPC：插件管理迁移到官方 REST `POST /api/v1/plugins` 与 `/api/v1/plugins/{id}:enable|:disable|:remove`；`configService/reload` RPC 删除，由 0.39 的 ConfigService 文件监听原生热加载接管。
+- 上游新增 plugin marketplace、capabilities、session media、v2 sessions/mcp 查询面、自动标题等能力由 Runtime 提供，Farside 不重复实现。
+- 官方六平台 manifest、URL 与 SHA-256 已锁定；`current` 已原位更新为 0.39.1。
 
 ## 发布门禁
 

@@ -1,8 +1,9 @@
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, shell, BrowserWindow } from 'electron'
+import { app, dialog, shell, BrowserWindow } from 'electron'
 import { isAllowedExternalUrl, isAllowedPreviewUrl } from '@shared/security'
-import { registerIpcHandlers } from './ipc'
+import { hasActiveAgentWork, registerIpcHandlers } from './ipc'
+import { isRendererConfirmedClose, markRendererConfirmedClose } from './services/close-guard'
 import { isTrustedRendererUrl } from './security'
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
@@ -65,6 +66,32 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // 任务运行中拦截静默关闭：标题栏 × 与 /exit 在渲染层确认后经 IPC 关闭
+  // （视为已确认）；macOS 红绿灯等原生路径在这里补确认。app.quit() 的
+  // 退出流程（含 Windows 更新自动退出）在 before-quit 中放行。
+  let quitting = false
+  app.once('before-quit', () => {
+    quitting = true
+  })
+  mainWindow.on('close', (event) => {
+    if (quitting || isRendererConfirmedClose(mainWindow) || !hasActiveAgentWork()) return
+    event.preventDefault()
+    void dialog
+      .showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['仍要关闭', '取消'],
+        defaultId: 1,
+        cancelId: 1,
+        message: '仍有会话在运行中',
+        detail: '关闭 Farside 会中断正在运行的任务与终端进程。确定要关闭吗？'
+      })
+      .then(({ response }) => {
+        if (response !== 0) return
+        markRendererConfirmedClose(mainWindow)
+        mainWindow.close()
+      })
+  })
+
   // 渲染层一律禁止开新窗口；http/https 外链交给系统浏览器（Markdown 的 target=_blank 走这里）
   mainWindow.webContents.setWindowOpenHandler((details) => {
     openExternal(details.url)
@@ -106,7 +133,7 @@ function createWindow(): void {
         }
         const verifyOnboarding = (): void => {
           void mainWindow.webContents.executeJavaScript(
-            "document.body.innerText.includes('选择你的 Kimi 链路') || document.body.innerText.includes('Choose your Kimi connection')"
+            "document.body.innerText.includes('连接你的 Kimi 链路') || document.body.innerText.includes('Connect a Kimi provider')"
           ).then((visible) => {
             if (visible) {
               if (smokeMode === 'account') {

@@ -3,14 +3,14 @@ import { access } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const KIMI_UPSTREAM_VERSION = '0.31.1'
-export const KIMI_UPSTREAM_REVISION = '6b56c11697771fe596099b38bafae539820309a4'
+export const KIMI_UPSTREAM_VERSION = '0.39.1'
+export const KIMI_UPSTREAM_REVISION = '5efca0c3116743855c28426000073bfe34a4862f'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-// 0.31.1 contains the three previously maintained harness adaptations:
-// bounded tool-result storage, REST agent controls, and progressive built-ins.
-// Keep the 0.28 patch queue as historical evidence, but do not replay it on
-// the candidate source baseline.
+// 0.39.1 keeps the three previously maintained harness adaptations and adds
+// native plugin REST + config file watching, which replace the two dead
+// /api/v2 RPC calls Farside used before. The 0.28 patch queue stays as
+// historical evidence, but nothing needs replaying on this baseline.
 export const KIMI_PATCH_FILES = []
 
 const patchPaths = KIMI_PATCH_FILES.map((file) =>
