@@ -28,6 +28,11 @@ jobs:
             os: macos-latest
             target: mac
             artifact: dist/*.dmg
+          # electron-builder 已配置 AppImage target；与 CI 的 ubuntu 快速通道对齐
+          - label: Linux
+            os: ubuntu-latest
+            target: linux
+            artifact: dist/*.AppImage
 
     steps:
       - name: Checkout
@@ -92,8 +97,21 @@ jobs:
             --assets-dir release-assets \
             --output release-notes.md
 
+      # 用户下载后可自行核对安装包完整性；签名/公证需证书，另行接入
+      - name: Generate SHA256 checksums
+        run: |
+          set -e
+          cd release-assets
+          for f in *.exe *.dmg *.AppImage; do
+            [ -e "$f" ] || continue
+            sha256sum "$f"
+          done > ../SHA256SUMS.txt
+          test -s ../SHA256SUMS.txt
+
       - name: Create release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/*
+            SHA256SUMS.txt
           body_path: release-notes.md

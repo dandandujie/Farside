@@ -11,6 +11,8 @@ const RELEASE_LATEST = `${RELEASE_ROOT}latest`
 const REQUEST_TIMEOUT_MS = 8_000
 // 安装包远小于此值；上限只是防止异常响应撑爆磁盘。
 const MAX_UPDATE_BYTES = 1024 * 1024 * 1024
+// 下载停滞判定：连续这么久没有任何新字节即取消（弱网/断网自愈）。
+const DOWNLOAD_STALL_TIMEOUT_MS = 60_000
 const MAC_APP_BUNDLE = '/Applications/Farside.app'
 
 interface GitHubAsset {
@@ -65,7 +67,11 @@ function isTrustedReleaseUrl(value: string): boolean {
 }
 
 function selectAsset(assets: GitHubAsset[], platform: NodeJS.Platform, arch: string): GitHubAsset | undefined {
-  const extension = platform === 'win32' ? '.exe' : platform === 'darwin' ? '.dmg' : null
+  const extension =
+    platform === 'win32' ? '.exe'
+    : platform === 'darwin' ? '.dmg'
+    : platform === 'linux' ? '.appimage'
+    : null
   if (!extension) return undefined
   const candidates = assets.filter((asset) =>
     typeof asset.name === 'string' &&
@@ -331,8 +337,20 @@ export class UpdateService {
       let received = 0
       try {
         const reader = response.body.getReader()
+        const readWithWatchdog = () => {
+          let timer: NodeJS.Timeout | undefined
+          return Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error('安装包下载停滞，已取消（连接 60 秒无进展）')),
+                DOWNLOAD_STALL_TIMEOUT_MS
+              )
+            })
+          ]).finally(() => clearTimeout(timer))
+        }
         for (;;) {
-          const { done, value } = await reader.read()
+          const { done, value } = await readWithWatchdog()
           if (done) break
           if (!value) continue
           received += value.byteLength
@@ -340,6 +358,10 @@ export class UpdateService {
           await handle.write(value)
           onProgress?.(received, total)
         }
+      } catch (error) {
+        // 任何中断都清掉半截安装包，避免下次误开
+        await fs.rm(filePath, { force: true }).catch(() => undefined)
+        throw error
       } finally {
         await handle.close()
       }
