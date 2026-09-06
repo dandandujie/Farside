@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { ApprovalEvent } from '@shared/types'
 import { useFarsideStore } from '../../../lib/store'
 import { PrismLine } from '../../../design-system/PrismLine'
@@ -9,7 +10,7 @@ import { usePreferences } from '../../../lib/preferences'
  * 完整参数与 diff 由 Composer 上方的审批卡（approvalQueue overlay）承担；
  * 点击本节点把焦点移过去（依赖审批卡根节点带 data-approval-card 属性）。
  */
-export function ApprovalNode({ event }: { event: ApprovalEvent }) {
+function ApprovalNodeImpl({ event }: { event: ApprovalEvent }) {
   const { locale } = usePreferences()
   const english = locale === 'en-US'
   const pending = useFarsideStore((s) => s.approvalQueue.some((a) => a.id === event.approvalId))
@@ -74,3 +75,6 @@ export function ApprovalNode({ event }: { event: ApprovalEvent }) {
     </div>
   )
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const ApprovalNode = memo(ApprovalNodeImpl)

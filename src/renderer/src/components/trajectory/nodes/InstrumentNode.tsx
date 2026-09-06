@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import type { InstrumentEvent, InstrumentStatus } from '@shared/types'
 import { MoonPhase } from '../../../design-system/MoonPhase'
 import { Chevron, MarkerSlot, SquareMarker } from './markers'
@@ -44,7 +44,7 @@ function StatusWord({ status, durationMs }: { status: InstrumentStatus; duration
  * Instrument：仪器读数卡片。
  * 工具名 + 状态保持单行；参数与输出默认完全隐藏，用户主动展开后才呈现。
  */
-export function InstrumentNode({ event }: { event: InstrumentEvent }) {
+function InstrumentNodeImpl({ event }: { event: InstrumentEvent }) {
   const { t } = usePreferences()
   const [expanded, setExpanded] = useState(false)
 
@@ -125,3 +125,6 @@ export function InstrumentNode({ event }: { event: InstrumentEvent }) {
     </div>
   )
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const InstrumentNode = memo(InstrumentNodeImpl)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import type { SatelliteEvent, SatelliteStatus } from '@shared/types'
 import { Chevron, SatelliteArc } from './markers'
 import { usePreferences } from '../../../lib/preferences'
@@ -242,6 +242,9 @@ export function SatelliteGroup({ events }: { events: SatelliteEvent[] }) {
   )
 }
 
-export function SatelliteNode({ event }: { event: SatelliteEvent }) {
+function SatelliteNodeImpl({ event }: { event: SatelliteEvent }) {
   return <SatelliteGroup events={[event]} />
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const SatelliteNode = memo(SatelliteNodeImpl)

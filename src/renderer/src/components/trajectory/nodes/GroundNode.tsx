@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, memo } from 'react'
 import type { Attachment, GroundEvent } from '@shared/types'
 import { usePreferences } from '../../../lib/preferences'
 import { useActiveSession, useFarsideStore } from '../../../lib/store'
@@ -19,7 +19,7 @@ function AttachmentPill({ attachment }: { attachment: Attachment }) {
 }
 
 /** 用户请求固定靠右成块，和下方“已处理”分隔形成清晰的问答阅读顺序。 */
-export function GroundNode({ event }: { event: GroundEvent }) {
+function GroundNodeImpl({ event }: { event: GroundEvent }) {
   const { locale } = usePreferences()
   const active = useActiveSession()
   const undoLastTurn = useFarsideStore((state) => state.undoLastTurn)
@@ -117,3 +117,6 @@ export function GroundNode({ event }: { event: GroundEvent }) {
     </div>
   )
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const GroundNode = memo(GroundNodeImpl)

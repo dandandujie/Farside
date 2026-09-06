@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, memo } from 'react'
 import type { TransmissionEvent } from '@shared/types'
 import { Chevron, DiamondMarker, MarkerSlot } from './markers'
 import { usePreferences } from '../../../lib/preferences'
 
 /** Transmission：深空传回的信号。默认折叠成 `深空思考 · 12.4s`，展开后是等宽小字正文。 */
-export function TransmissionNode({
+function TransmissionNodeImpl({
   event,
   active = false,
   itemCount = 1,
@@ -82,3 +82,6 @@ export function TransmissionNode({
     </div>
   )
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const TransmissionNode = memo(TransmissionNodeImpl)

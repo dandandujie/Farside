@@ -1,8 +1,9 @@
+import { memo } from 'react'
 import type { TelemetryEvent } from '@shared/types'
 import { MarkerSlot, TickMarker } from './markers'
 
 /** Telemetry：一行等宽小字读数条，数字 tabular-nums（.mono 已带）。 */
-export function TelemetryNode({ event }: { event: TelemetryEvent }) {
+function TelemetryNodeImpl({ event }: { event: TelemetryEvent }) {
   return (
     <div style={{ position: 'relative' }}>
       <MarkerSlot top={3}>
@@ -20,3 +21,6 @@ export function TelemetryNode({ event }: { event: TelemetryEvent }) {
     </div>
   )
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const TelemetryNode = memo(TelemetryNodeImpl)

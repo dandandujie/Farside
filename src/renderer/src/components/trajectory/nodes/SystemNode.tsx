@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import type { SystemEvent } from '@shared/types'
 import { Chevron, MarkerSlot } from './markers'
 import { usePreferences } from '../../../lib/preferences'
 
 /** 内部上下文只占一行并默认折叠，避免伪装成用户请求。 */
-export function SystemNode({ event }: { event: SystemEvent }) {
+function SystemNodeImpl({ event }: { event: SystemEvent }) {
   const { t } = usePreferences()
   const [open, setOpen] = useState(false)
   return (
@@ -28,3 +28,6 @@ export function SystemNode({ event }: { event: SystemEvent }) {
     </div>
   )
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const SystemNode = memo(SystemNodeImpl)

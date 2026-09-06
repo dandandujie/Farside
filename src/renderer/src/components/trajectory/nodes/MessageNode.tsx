@@ -1,9 +1,10 @@
+import { memo } from 'react'
 import type { MessageEvent } from '@shared/types'
 import { Markdown } from '../Markdown'
 import { DashMarker, MarkerSlot } from './markers'
 
 /** Message：探测器回传的 markdown 正文；streaming 时末尾带 prism 呼吸光标。 */
-export function MessageNode({ event, streaming = false }: { event: MessageEvent; streaming?: boolean }) {
+function MessageNodeImpl({ event, streaming = false }: { event: MessageEvent; streaming?: boolean }) {
   return (
     <div style={{ position: 'relative' }}>
       <MarkerSlot top={8}>
@@ -14,3 +15,6 @@ export function MessageNode({ event, streaming = false }: { event: MessageEvent;
     </div>
   )
 }
+
+/** 事件对象引用仅在内容变化时更新；memo 让流式更新跳过未变化节点。 */
+export const MessageNode = memo(MessageNodeImpl)
