@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { WorkspaceInfo } from '@shared/ipc'
 import type { Session } from '@shared/types'
-import type { MoonPhase as MoonPhaseValue } from '@shared/types'
 import { useFarsideStore } from '../../lib/store'
 import { MoonPhase } from '../../design-system/MoonPhase'
 import { SectionLabel } from '../../design-system/SectionLabel'
@@ -17,19 +16,14 @@ function relativeTime(at: number, english: boolean): string {
   return hours < 24 ? (english ? `${hours}h ago` : `${hours} 小时前`) : (english ? `${Math.floor(hours / 24)}d ago` : `${Math.floor(hours / 24)} 天前`)
 }
 
+import { PHASE_STATUS } from '../../lib/phaseLabels'
+
 function sessionStatus(
   session: Session,
   english: boolean
 ): { label: string; active: boolean; color: string } {
   const phase = session.phase
-  const labels: Record<MoonPhaseValue, [string, string]> = {
-    new: ['空闲', 'Idle'],
-    waxing: ['已接收', 'Queued'],
-    'first-quarter': ['思考中', 'Thinking'],
-    gibbous: ['执行中', 'Running'],
-    full: ['等待确认', 'Awaiting approval'],
-    waning: ['收尾中', 'Wrapping up']
-  }
+  const terms = PHASE_STATUS[phase]
   if (phase === 'new' && session.lastOutcome) {
     const outcome = {
       completed: ['已完成', 'Completed'],
@@ -46,7 +40,7 @@ function sessionStatus(
     return { label, active: false, color }
   }
   return {
-    label: labels[phase][english ? 1 : 0],
+    label: english ? terms.en : terms.zh,
     active: phase !== 'new',
     color: phase === 'new' ? 'var(--faint)' : 'var(--moonlight)'
   }

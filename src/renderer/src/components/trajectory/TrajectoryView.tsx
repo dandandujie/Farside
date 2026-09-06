@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { MoonPhase, Session, TrajectoryEvent } from '@shared/types'
 import { SessionHeader } from './SessionHeader'
 import { GoalBar } from './GoalBar'
@@ -11,6 +11,7 @@ import { MessageNode } from './nodes/MessageNode'
 import { TelemetryNode } from './nodes/TelemetryNode'
 import { SystemNode } from './nodes/SystemNode'
 import { usePreferences } from '../../lib/preferences'
+import { useFarsideStore } from '../../lib/store'
 import { MoonPhase as MoonPhaseIcon } from '../../design-system/MoonPhase'
 import { Chevron } from './nodes/markers'
 import { TurnChangesCard } from './TurnChangesCard'
@@ -59,6 +60,26 @@ function groupTurns(events: TrajectoryEvent[]): Turn[] {
   }
   return turns
 }
+
+/**
+ * 流式期间每次 event-upsert 都会重建 events 数组，groupTurns 的全部 Turn
+ * 对象随之换新引用；已完成 Turn 的内容实际不可变。逐项比对事件引用，
+ * 未变化的 Turn 复用旧对象，让 memo 化的 TurnGroup 在流式更新时跳过重渲染。
+ */
+function reconcileTurns(previous: Turn[], next: Turn[]): Turn[] {
+  if (previous.length !== next.length) return next
+  for (let index = 0; index < next.length; index += 1) {
+    const prev = previous[index]
+    const current = next[index]
+    if (!prev || prev.id !== current.id || prev.events.length !== current.events.length) return next
+    for (let eventIndex = 0; eventIndex < current.events.length; eventIndex += 1) {
+      if (prev.events[eventIndex] !== current.events[eventIndex]) return next
+    }
+  }
+  return previous
+}
+
+import { PHASE_STATUS_PROSE } from '../../lib/phaseLabels'
 
 function formatDuration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000))
@@ -216,14 +237,7 @@ function WorkingIndicator({ phase, startedAt }: { phase: MoonPhase; startedAt: n
   }, [phase, startedAt])
   if (phase === 'new') return null
   const english = locale === 'en-US'
-  const labels: Record<MoonPhase, [string, string]> = {
-    new: ['已完成', 'Completed'],
-    waxing: ['请求已发送，等待 Kimi 响应', 'Sent, waiting for Kimi'],
-    'first-quarter': ['正在深空思考', 'Thinking in deep space'],
-    gibbous: ['正在执行工具', 'Running tools'],
-    full: ['等待你的确认', 'Awaiting your approval'],
-    waning: ['正在整理结果', 'Wrapping up']
-  }
+  const prose = PHASE_STATUS_PROSE[phase]
   const active = phase !== 'full'
   const waitingSeconds = Math.max(0, clock - startedAt) / 1000
   return (
@@ -234,10 +248,10 @@ function WorkingIndicator({ phase, startedAt }: { phase: MoonPhase; startedAt: n
       style={{ display: 'flex', alignItems: 'center', gap: 9, width: 'fit-content', minHeight: 30, marginTop: 16, padding: '3px 10px 3px 5px', border: '1px solid var(--line)', borderRadius: 999, background: 'color-mix(in srgb, var(--regolith) 70%, transparent)', color: 'var(--faint)' }}
     >
       <span style={{ width: 23, height: 23, display: 'grid', placeItems: 'center' }}>
-        <MoonPhaseIcon phase={phase} size={17} title={labels[phase][english ? 1 : 0]} active={active} />
+        <MoonPhaseIcon phase={phase} size={17} title={english ? prose.en : prose.zh} active={active} />
       </span>
       <span style={{ fontSize: 11.5, letterSpacing: '0.01em', color: phase === 'full' ? 'var(--dust)' : 'var(--moonlight)' }}>
-        {labels[phase][english ? 1 : 0]}
+        {english ? prose.en : prose.zh}
         {phase === 'waxing' && waitingSeconds >= 1 ? ` · ${waitingSeconds.toFixed(1)}s` : ''}
       </span>
     </div>
@@ -342,14 +356,16 @@ function ActivityBatch({
   )
 }
 
-function TurnGroup({
-  turn,
-  completed,
-  phase,
-  lastId,
-  showChangeCard,
-  sessionId
-}: {
+/** 已完成 Turn 的内容不可变；memo 化后流式更新只重渲染当前 Turn。 */
+const TurnGroup = memo(function TurnGroup(
+  {
+    turn,
+    completed,
+    phase,
+    lastId,
+    showChangeCard,
+    sessionId
+  }: {
   turn: Turn
   completed: boolean
   phase: MoonPhase
@@ -413,17 +429,26 @@ function TurnGroup({
       {completed && showChangeCard ? <TurnChangesCard sessionId={sessionId} events={turn.events} /> : null}
     </section>
   )
-}
+})
 
 /** 纵向任务轨道：按用户请求分 Turn，完成的 Turn 自动折叠，当前 Turn 保持展开。 */
 export function TrajectoryView({ session }: { session: Session }) {
   const { t, locale } = usePreferences()
+  const sessionLoading = useFarsideStore((s) => s.sessionLoading)
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
+  const turnsRef = useRef<Turn[]>([])
   // 运行时注入仅供 Agent 使用，不属于用户与助手的对话内容。
-  const visibleEvents = session.events.filter((event) => event.kind !== 'system')
-  const turns = groupTurns(visibleEvents)
+  const visibleEvents = useMemo(
+    () => session.events.filter((event) => event.kind !== 'system'),
+    [session.events]
+  )
+  const turns = useMemo(() => {
+    const next = reconcileTurns(turnsRef.current, groupTurns(visibleEvents))
+    turnsRef.current = next
+    return next
+  }, [visibleEvents])
 
   const handleScroll = () => {
     const element = scrollRef.current
@@ -467,8 +492,14 @@ export function TrajectoryView({ session }: { session: Session }) {
       <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 24px' }}>
         {visibleEvents.length === 0 ? (
           <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: 12.5, color: 'var(--faint)', letterSpacing: '0.02em' }}>
-              {t('轨道尚未建立，发出第一条指令。')}
+            <span
+              role="status"
+              aria-live="polite"
+              style={{ fontSize: 12.5, color: 'var(--faint)', letterSpacing: '0.02em' }}
+            >
+              {sessionLoading
+                ? (locale === 'en-US' ? 'Establishing orbit…' : '正在建立轨道…')
+                : t('轨道尚未建立，发出第一条指令。')}
             </span>
           </div>
         ) : (
