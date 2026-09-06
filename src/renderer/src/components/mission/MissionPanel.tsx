@@ -82,7 +82,7 @@ export function MissionPanel() {
       </div>
       {/* 所有 tab 保持挂载，切换只改可见性：状态与已取数据不丢，切回不重新加载 */}
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        <div style={{ display: tab === 'diff' ? 'contents' : 'none' }}><DiffTab /></div>
+        <div style={{ display: tab === 'diff' ? 'contents' : 'none' }}><DiffTab visible={tab === 'diff'} /></div>
         <div style={{ display: tab === 'telemetry' ? 'contents' : 'none' }}><TelemetryTab /></div>
         <div style={{ display: tab === 'files' ? 'contents' : 'none' }}><FilesTab /></div>
         <div style={{ display: tab === 'preview' ? 'contents' : 'none' }}><PreviewTab /></div>

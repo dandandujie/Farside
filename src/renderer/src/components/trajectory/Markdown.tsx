@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import { useActiveSession, useFarsideStore } from '../../lib/store'
 import { usePreferences } from '../../lib/preferences'
 
@@ -318,7 +318,8 @@ function CodeBlockView({ lang, code }: { lang: string; code: string }) {
 
 const HEADING_SIZE = [16, 16, 14, 12.5] // # / ## / ### / ####
 
-export function Markdown({ text }: { text: string }) {
+/** memo + useMemo：父组件重渲染（locale 切换、store 变更）时不重复 parseBlocks；流式追加仍按内容变化重解析。 */
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const { locale } = usePreferences()
   const session = useActiveSession()
   const runInTerminal = useFarsideStore((state) => state.runInTerminal)
@@ -328,7 +329,7 @@ export function Markdown({ text }: { text: string }) {
     openLocal: (target) => { void window.api?.workspace.open(cleanLocalTarget(target, session?.cwd ?? '')) },
     run: runInTerminal
   }
-  const blocks = parseBlocks(text)
+  const blocks = useMemo(() => parseBlocks(text), [text])
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {blocks.map((b, i) => {
@@ -390,4 +391,4 @@ export function Markdown({ text }: { text: string }) {
       })}
     </div>
   )
-}
+})

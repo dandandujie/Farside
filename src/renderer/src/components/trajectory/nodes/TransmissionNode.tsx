@@ -21,7 +21,8 @@ function TransmissionNodeImpl({
   useEffect(() => {
     if (!active) return
     setClock(Date.now())
-    const timer = window.setInterval(() => setClock(Date.now()), 100)
+    // 计时展示到 0.1s，250ms 刷新足够；与 WorkingIndicator 一致，避免 10fps 无谓重渲染。
+    const timer = window.setInterval(() => setClock(Date.now()), 250)
     return () => window.clearInterval(timer)
   }, [active])
   const durationMs = active

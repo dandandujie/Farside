@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import type { SatelliteEvent, SatelliteStatus } from '@shared/types'
 import { Chevron, SatelliteArc } from './markers'
+import { scrollBehavior } from '../../../lib/motion'
 import { usePreferences } from '../../../lib/preferences'
 
 const TERMINAL = new Set<SatelliteStatus>(['done', 'failed', 'cancelled'])
@@ -173,13 +174,13 @@ function SwarmRail({
             event.preventDefault()
             rail.scrollBy({
               left: event.key === 'ArrowLeft' ? -step : step,
-              behavior: 'smooth'
+              behavior: scrollBehavior()
             })
           } else if (event.key === 'Home' || event.key === 'End') {
             event.preventDefault()
             rail.scrollTo({
               left: event.key === 'Home' ? 0 : rail.scrollWidth,
-              behavior: 'smooth'
+              behavior: scrollBehavior()
             })
           }
         }}

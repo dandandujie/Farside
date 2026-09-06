@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import type { ApprovalEvent } from '@shared/types'
 import { useFarsideStore } from '../../../lib/store'
+import { scrollBehavior } from '../../../lib/motion'
 import { PrismLine } from '../../../design-system/PrismLine'
 import { MarkerSlot, TriangleMarker } from './markers'
 import { usePreferences } from '../../../lib/preferences'
@@ -18,7 +19,7 @@ function ApprovalNodeImpl({ event }: { event: ApprovalEvent }) {
   const focusCard = () => {
     const el = document.querySelector<HTMLElement>('[data-approval-card]')
     if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    el.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' })
     el.querySelector('button')?.focus()
   }
 

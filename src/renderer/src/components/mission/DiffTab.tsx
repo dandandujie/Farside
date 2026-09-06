@@ -62,8 +62,9 @@ function LineNo({ n }: { n: number | null }) {
   )
 }
 
-/** 改动 tab：左侧文件列表（+/− 徽标），右侧完整 unified diff。两栏 1:2。 */
-export function DiffTab() {
+/** 改动 tab：左侧文件列表（+/− 徽标），右侧完整 unified diff。两栏 1:2。
+ * visible 由 MissionPanel 传入：tab 隐藏时暂停 git_status 轮询，避免后台 IPC 空转。 */
+export function DiffTab({ visible = true }: { visible?: boolean }) {
   const { locale } = usePreferences()
   const english = locale === 'en-US'
   const active = useActiveSession()
@@ -94,6 +95,7 @@ export function DiffTab() {
   useEffect(() => {
     const agent = window.api?.agent
     if (!active || !agent) return
+    if (!visible) return
     let alive = true
     const refresh = async () => {
       if (refreshingRef.current) return
@@ -130,7 +132,7 @@ export function DiffTab() {
       alive = false
       window.clearInterval(interval)
     }
-  }, [active?.id, active?.phase, toolRevision])
+  }, [active?.id, active?.phase, toolRevision, visible])
 
   useEffect(() => {
     if (!reviewFilePath || !changes.some((change) => change.path === reviewFilePath)) return
