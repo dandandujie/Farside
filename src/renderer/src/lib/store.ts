@@ -16,7 +16,26 @@ import type {
 } from '@shared/types'
 import { MODELS } from '@shared/types'
 import { UNSUPPORTED_SLASH_COMMANDS } from '../components/composer/slashCommands'
+import {
+  composerPatch,
+  composerPatchForSession,
+  persistSessionComposer,
+  readSessionComposer,
+  type SessionComposerState
+} from './composer-state'
+import {
+  MAX_QUEUE_PER_SESSION,
+  clearPersistedPromptQueues,
+  loadPersistedPromptQueues,
+  persistPromptQueues,
+  requeueFront,
+  shiftQueue,
+  type QueuedPrompt
+} from './prompt-queue'
+import { createSlashHandlers } from './slash-handlers'
 import { MOCK_APPROVAL, MOCK_SESSIONS } from './mock'
+
+export type { QueuedPrompt }
 
 export type RailView = 'sessions' | 'goals' | 'settings'
 export type MissionTab = 'diff' | 'telemetry' | 'files' | 'preview'
@@ -28,20 +47,6 @@ export interface PreviewDocument {
   kind: 'markdown' | 'html' | 'image' | 'text' | 'url'
   mime?: string
   encoding?: 'utf8' | 'base64'
-}
-
-export interface QueuedPrompt {
-  id: string
-  sessionId: string
-  text: string
-  fileRefs: string[]
-  attachments: Attachment[]
-  model: ModelId
-  permissionMode: PermissionMode
-  planMode: boolean
-  swarmMode: boolean
-  goalObjective?: string
-  createdAt: number
 }
 
 export interface SessionError {
@@ -180,15 +185,6 @@ interface FarsideState {
   clearUpdateNotice(): void
 }
 
-interface SessionComposerState {
-  draft: string
-  attachments: Attachment[]
-  model: ModelId
-  permissionMode: PermissionMode
-  planMode: boolean
-  swarmMode: boolean
-}
-
 let removeAgentListener: (() => void) | null = null
 const visualPreview = new URLSearchParams(window.location.search).has('shot')
 
@@ -205,81 +201,6 @@ function togglePreference(key: string, values: string[], id: string): string[] {
   const next = values.includes(id) ? values.filter((value) => value !== id) : [...values, id]
   localStorage.setItem(`farside:${key}`, JSON.stringify(next))
   return next
-}
-
-function readSessionComposer(sessionId: string, fallbackModel: ModelId): SessionComposerState {
-  const fallback: SessionComposerState = {
-    draft: '',
-    attachments: [],
-    model: fallbackModel,
-    permissionMode: 'manual',
-    planMode: false,
-    swarmMode: false
-  }
-  try {
-    const raw = JSON.parse(localStorage.getItem(`farside:session-composer:${sessionId}`) || 'null') as Partial<SessionComposerState> | null
-    if (!raw) return fallback
-    return {
-      ...fallback,
-      draft: typeof raw.draft === 'string' ? raw.draft : '',
-      model: typeof raw.model === 'string' && raw.model ? raw.model : fallbackModel,
-      permissionMode: ['manual', 'auto', 'yolo'].includes(raw.permissionMode ?? '') ? raw.permissionMode as PermissionMode : 'manual',
-      planMode: raw.planMode === true,
-      swarmMode: raw.swarmMode === true
-    }
-  } catch {
-    return fallback
-  }
-}
-
-function persistSessionComposer(sessionId: string, composer: SessionComposerState): void {
-  try {
-    // 附件二进制只保留在当前进程内，避免把图片写入 localStorage。
-    localStorage.setItem(`farside:session-composer:${sessionId}`, JSON.stringify({
-      draft: composer.draft,
-      model: composer.model,
-      permissionMode: composer.permissionMode,
-      planMode: composer.planMode,
-      swarmMode: composer.swarmMode
-    }))
-  } catch {
-    // localStorage 不可用时仍保留内存态。
-  }
-}
-
-function composerPatch(
-  state: FarsideState,
-  patch: Partial<SessionComposerState>
-): Partial<FarsideState> {
-  const id = state.activeSessionId
-  if (!id) return patch
-  return composerPatchForSession(state, id, patch)
-}
-
-function composerPatchForSession(
-  state: FarsideState,
-  id: string,
-  patch: Partial<SessionComposerState>
-): Partial<FarsideState> {
-  const current: SessionComposerState = state.composerBySession[id]
-    ? state.composerBySession[id]
-    : {
-        ...readSessionComposer(id, state.sessions.find((session) => session.id === id)?.model ?? state.model),
-        ...(state.activeSessionId === id ? {
-          draft: state.draft,
-          attachments: state.attachments,
-          model: state.model,
-          permissionMode: state.permissionMode,
-          planMode: state.planMode,
-          swarmMode: state.swarmMode
-        } : {})
-      }
-  const next = { ...current, ...patch }
-  persistSessionComposer(id, next)
-  return {
-    ...(state.activeSessionId === id ? patch : {}),
-    composerBySession: { ...state.composerBySession, [id]: next }
-  }
 }
 
 function readOnboardingDismissed(): boolean {
@@ -305,6 +226,32 @@ function quotaFromAccount(account: AccountState | null): QuotaInfo {
     fiveHourUsedPct: account?.usage?.fiveHour?.usedPct ?? 0,
     extraBalanceCny: account?.usage?.extraBalanceCny ?? null
   }
+}
+
+/**
+ * 审批/提问到达时的注意力引导：窗口不在前台时发系统通知、闪任务栏并计 badge，
+ * 让用户切在别的应用里也不会让 Agent 无限期干等。窗口聚焦时主进程侧直接忽略。
+ */
+function notifyAttention(
+  kind: 'approval' | 'question',
+  sessionId: string,
+  detail: string
+): void {
+  const bridge = window.api?.attention
+  if (!bridge || document.hasFocus()) return
+  const state = useFarsideStore.getState()
+  const pendingCount = Math.max(1, state.approvalQueue.length + state.questionQueue.length)
+  const sessionTitle = state.sessions.find((session) => session.id === sessionId)?.title
+  const english = localStorage.getItem('farside:locale') === 'en-US'
+  const head = kind === 'approval'
+    ? (english ? 'Approval needed' : '等待审批')
+    : (english ? 'Waiting for your answer' : '等待你的回答')
+  void bridge.notify({
+    kind,
+    title: sessionTitle ? `${sessionTitle} · Farside` : 'Farside',
+    body: detail ? `${head} · ${detail}` : head,
+    pendingCount
+  })
 }
 
 function mergeEvent(
@@ -513,6 +460,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       const initialComposer = initialSession
         ? readSessionComposer(initialSession.id, initialSession.model || account?.activeModel || 'kimi-k3')
         : null
+      // 上次退出/崩溃时排队未发的指令：只恢复仍存在的会话（附件不持久化）。
+      const restoredQueues = loadPersistedPromptQueues(new Set(activeSessions.map((session) => session.id)))
       set({
         sessions: activeSessions,
         activeSessionId: activeSessions[0]?.id ?? null,
@@ -525,6 +474,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         account,
         ...(initialComposer ?? { model: account?.activeModel ?? get().model }),
         composerBySession: initialSession && initialComposer ? { [initialSession.id]: initialComposer } : {},
+        promptQueues: restoredQueues,
         quota: quotaFromAccount(account),
         lastError: result.error ?? null,
         goal: result.goal ?? null,
@@ -587,6 +537,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       connected: false,
       lastError: null
     })
+    clearPersistedPromptQueues()
   },
   configureAccount: async (input) => {
     const result = await window.api?.account.configure(input)
@@ -1107,8 +1058,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       return
     }
     const queue = state.promptQueues[state.activeSessionId] ?? []
-    if (queue.length >= 20) {
-      get().setSessionError(state.activeSessionId as string, '当前会话的等待队列已达 20 条，请先处理或移除部分请求')
+    if (queue.length >= MAX_QUEUE_PER_SESSION) {
+      get().setSessionError(state.activeSessionId as string, `当前会话的等待队列已达 ${MAX_QUEUE_PER_SESSION} 条，请先处理或移除部分请求`)
       return
     }
     const queued: QueuedPrompt = {
@@ -1132,11 +1083,12 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         [state.activeSessionId as string]: [...(current.promptQueues[state.activeSessionId as string] ?? []), queued]
       }
     }))
+    persistPromptQueues(get().promptQueues)
     queueMicrotask(() => get().dispatchNextQueued(queued.sessionId))
   },
   promptQueues: {},
   queueDispatchPending: {},
-  updateQueuedPrompt: (sessionId, id, text) =>
+  updateQueuedPrompt: (sessionId, id, text) => {
     set((state) => ({
       promptQueues: {
         ...state.promptQueues,
@@ -1144,16 +1096,22 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           item.id === id ? { ...item, text } : item
         )
       }
-    })),
-  removeQueuedPrompt: (sessionId, id) =>
+    }))
+    persistPromptQueues(get().promptQueues)
+  },
+  removeQueuedPrompt: (sessionId, id) => {
     set((state) => ({
       promptQueues: {
         ...state.promptQueues,
         [sessionId]: (state.promptQueues[sessionId] ?? []).filter((item) => item.id !== id)
       }
-    })),
-  clearPromptQueue: (sessionId) =>
-    set((state) => ({ promptQueues: { ...state.promptQueues, [sessionId]: [] } })),
+    }))
+    persistPromptQueues(get().promptQueues)
+  },
+  clearPromptQueue: (sessionId) => {
+    set((state) => ({ promptQueues: { ...state.promptQueues, [sessionId]: [] } }))
+    persistPromptQueues(get().promptQueues)
+  },
   dispatchNextQueued: (sessionId) => {
     const state = get()
     const session = state.sessions.find((item) => item.id === sessionId)
@@ -1177,14 +1135,12 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     set((current) => {
       const sessionErrors = { ...current.sessionErrors }
       delete sessionErrors[sessionId]
+      const { queues } = shiftQueue(current.promptQueues, sessionId)
       return {
       sending: current.activeSessionId === sessionId ? true : current.sending,
       lastError: null,
       sessionErrors,
-      promptQueues: {
-        ...current.promptQueues,
-        [sessionId]: (current.promptQueues[sessionId] ?? []).slice(1)
-      },
+      promptQueues: queues,
       queueDispatchPending: {
         ...current.queueDispatchPending,
         [sessionId]: queued.id
@@ -1202,6 +1158,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       )
       }
     })
+    persistPromptQueues(get().promptQueues)
     void api
       .submitPrompt({
         sessionId,
@@ -1219,10 +1176,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         get().setSessionError(sessionId, result.error ?? '指令发送失败', 'prompt')
         set((current) => ({
           sending: current.activeSessionId === sessionId ? false : current.sending,
-          promptQueues: {
-            ...current.promptQueues,
-            [sessionId]: [queued, ...(current.promptQueues[sessionId] ?? [])]
-          },
+          promptQueues: requeueFront(current.promptQueues, sessionId, queued),
           queueDispatchPending: Object.fromEntries(
             Object.entries(current.queueDispatchPending).filter(
               ([key, id]) => key !== sessionId || id !== queued.id
@@ -1234,6 +1188,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
               : session
           )
         }))
+        persistPromptQueues(get().promptQueues)
       })
   },
 
@@ -1439,6 +1394,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       return
     }
     if (update.kind === 'approval-upsert') {
+      const isNew = !get().approvalQueue.some((item) => item.id === update.approval.id)
       set((state) => ({
         approvalQueue: state.approvalQueue.some((item) => item.id === update.approval.id)
           ? state.approvalQueue.map((item) =>
@@ -1446,6 +1402,13 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
             )
           : [...state.approvalQueue, update.approval]
       }))
+      if (isNew) {
+        notifyAttention(
+          'approval',
+          update.approval.sessionId,
+          update.approval.detail.split('\n')[0]?.slice(0, 80) ?? update.approval.tool
+        )
+      }
       return
     }
     if (update.kind === 'approval-resolved') {
@@ -1455,6 +1418,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       return
     }
     if (update.kind === 'question-upsert') {
+      const isNew = !get().questionQueue.some((item) => item.id === update.question.id)
       set((state) => ({
         questionQueue: state.questionQueue.some((item) => item.id === update.question.id)
           ? state.questionQueue.map((item) =>
@@ -1462,6 +1426,13 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
             )
           : [...state.questionQueue, update.question]
       }))
+      if (isNew) {
+        notifyAttention(
+          'question',
+          update.question.sessionId,
+          update.question.questions[0]?.question.slice(0, 80) ?? ''
+        )
+      }
       return
     }
     if (update.kind === 'question-resolved') {
@@ -1478,214 +1449,17 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   }
 }))
 
-type SlashOutcome =
-  | { action: 'handled' }
-  /** 条件不满足（如会话级命令但无活动会话）：按原文继续作为提示词上送。 */
-  | { action: 'pass' }
-  /** 命令改写为提示词继续上送（如 /goal <目标>）。 */
-  | { action: 'prompt'; text: string; goalObjective?: string }
-
-interface SlashEnv {
-  activeSessionId: string | null
-}
-
-const handled = (): SlashOutcome => ({ action: 'handled' })
-
-function clearDraft(): void {
-  useFarsideStore.getState().setDraft('')
-}
-
 /**
- * 斜杠命令注册表：新增命令加一个 handler 即可，不再往 send() 的 if 链里堆分支。
- * 与 composer 的 SLASH_COMMANDS 补全清单保持同名；返回 prompt 时用改写文本继续上送。
+ * 斜杠命令注册表：实现在 lib/slash-handlers.ts（工厂 + 假 store 可直接单测）。
+ * 新增命令在 createSlashHandlers 里加一个 handler，并同步 composer 的 SLASH_COMMANDS 清单。
+ * 包装层把 zustand store 适配成工厂的松散结构视图。
  */
-const SLASH_HANDLERS: Record<string, (arg: string, env: SlashEnv) => SlashOutcome> = {
-  new: () => {
-    clearDraft()
-    useFarsideStore.getState().newSession()
-    return handled()
-  },
-  settings: () => {
-    clearDraft()
-    useFarsideStore.setState({ view: 'settings' })
-    return handled()
-  },
-  sessions: () => {
-    clearDraft()
-    useFarsideStore.setState({ view: 'sessions', sidebarOpen: true })
-    return handled()
-  },
-  plan: () => {
-    clearDraft()
-    useFarsideStore.getState().togglePlanMode()
-    return handled()
-  },
-  swarm: (arg) => {
-    const enabled = arg === 'on' ? true : arg === 'off' ? false : !useFarsideStore.getState().swarmMode
-    clearDraft()
-    useFarsideStore.getState().setSwarmMode(enabled)
-    return handled()
-  },
-  auto: () => {
-    clearDraft()
-    useFarsideStore.getState().setPermissionMode('auto')
-    return handled()
-  },
-  yolo: () => {
-    clearDraft()
-    useFarsideStore.getState().setPermissionMode('yolo')
-    return handled()
-  },
-  permission: (arg) => {
-    if (!['manual', 'auto', 'yolo'].includes(arg)) return { action: 'pass' }
-    clearDraft()
-    useFarsideStore.getState().setPermissionMode(arg as PermissionMode)
-    return handled()
-  },
-  model: (arg) => {
-    const picked =
-      arg === 'k3' || arg === 'kimi-k3'
-        ? 'kimi-k3'
-        : arg.includes('highspeed')
-          ? 'kimi-for-coding-highspeed'
-          : arg as ModelId || null
-    if (!picked) return handled()
-    // 校验模型 ID 确实在当前账户可用列表中，避免任意字符串静默生效。
-    const known = useFarsideStore.getState().account?.models ?? []
-    if (known.length > 0 && !known.some((item) => item.id === picked)) {
-      clearDraft()
-      useFarsideStore.setState({ lastError: `未知模型「${picked}」。可用模型：${known.map((item) => item.id).join('、')}` })
-      return handled()
-    }
-    clearDraft()
-    useFarsideStore.getState().setModel(picked)
-    return handled()
-  },
-  exit: () => {
-    clearDraft()
-    const state = useFarsideStore.getState()
-    const busy = state.sessions.some(
-      (session) => session.phase !== 'new' || state.promptQueues[session.id]?.length
-    )
-    if (busy && !window.confirm('仍有会话在运行或排队中，退出会中断任务。确定关闭 Farside？')) return handled()
-    void window.api?.window.close()
-    return handled()
-  },
-  help: () => {
-    clearDraft()
-    useFarsideStore.setState({ paletteOpen: true })
-    return handled()
-  },
-  status: () => {
-    clearDraft()
-    useFarsideStore.setState({ missionOpen: true, missionTab: 'telemetry' })
-    return handled()
-  },
-  mcp: () => {
-    clearDraft()
-    useFarsideStore.getState().openSettings('extensions')
-    return handled()
-  },
-  plugins: () => {
-    clearDraft()
-    useFarsideStore.getState().openSettings('extensions')
-    return handled()
-  },
-  'mcp-config': () => {
-    clearDraft()
-    useFarsideStore.getState().openSettings('configuration')
-    return handled()
-  },
-  login: () => {
-    // 桌面端登录与 Provider 切换集中在设置的账户页完成。
-    clearDraft()
-    useFarsideStore.getState().openSettings('account')
-    return handled()
-  },
-  logout: () => {
-    clearDraft()
-    void useFarsideStore.getState().logoutAccount()
-    return handled()
-  },
-  theme: () => {
-    clearDraft()
-    window.dispatchEvent(new CustomEvent('farside:toggle-theme'))
-    return handled()
-  },
-  fork: (_arg, env) => {
-    if (!env.activeSessionId) return { action: 'pass' }
-    clearDraft()
-    useFarsideStore.getState().forkSession(env.activeSessionId)
-    return handled()
-  },
-  'export-md': (_arg, env) => {
-    if (!env.activeSessionId) return { action: 'pass' }
-    clearDraft()
-    useFarsideStore.getState().exportSession(env.activeSessionId)
-    return handled()
-  },
-  title: (arg, env) => {
-    if (!env.activeSessionId || !arg) return { action: 'pass' }
-    clearDraft()
-    useFarsideStore.getState().renameSession(env.activeSessionId, arg)
-    return handled()
-  },
-  reload: (_arg, env) => {
-    if (!env.activeSessionId) return { action: 'pass' }
-    clearDraft()
-    useFarsideStore.getState().setActiveSession(env.activeSessionId)
-    return handled()
-  },
-  undo: (_arg, env) => {
-    if (!env.activeSessionId) return { action: 'pass' }
-    clearDraft()
-    useFarsideStore.getState().undoLastTurn()
-    return handled()
-  },
-  compact: (arg, env) => {
-    if (!env.activeSessionId) return { action: 'pass' }
-    clearDraft()
-    const sessionId = env.activeSessionId
-    void window.api?.agent
-      .runSessionAction({
-        sessionId,
-        action: 'compact',
-        instruction: arg || undefined
-      })
-      .then((result) => {
-        if (!result.ok) useFarsideStore.getState().setSessionError(sessionId, result.error ?? '/compact 执行失败')
-      })
-    return handled()
-  },
-  goal: (arg) => {
-    if (arg === 'pause') {
-      clearDraft()
-      useFarsideStore.getState().pauseGoal()
-      return handled()
-    }
-    if (arg === 'resume') {
-      clearDraft()
-      useFarsideStore.getState().resumeGoal()
-      return handled()
-    }
-    if (arg === 'cancel') {
-      clearDraft()
-      useFarsideStore.getState().cancelGoal()
-      return handled()
-    }
-    if (!arg) {
-      clearDraft()
-      useFarsideStore.setState({ view: 'goals' })
-      return handled()
-    }
-    return { action: 'prompt', text: arg, goalObjective: arg }
+const SLASH_HANDLERS = createSlashHandlers({
+  getState: () => useFarsideStore.getState(),
+  setState: (partial) => {
+    useFarsideStore.setState(partial as Parameters<typeof useFarsideStore.setState>[0])
   }
-}
-// 同义命令复用同一 handler。
-SLASH_HANDLERS.usage = SLASH_HANDLERS.status
-SLASH_HANDLERS['update-config'] = SLASH_HANDLERS['mcp-config']
-SLASH_HANDLERS.provider = SLASH_HANDLERS.login
-SLASH_HANDLERS.export = SLASH_HANDLERS['export-md']
+})
 
 export function useActiveSession(): Session | null {
   return useFarsideStore(

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useFarsideStore, useActiveSession, type RailView } from '../../lib/store'
 import { CrescentLogo } from '../../design-system/CrescentLogo'
 import { usePreferences } from '../../lib/preferences'
@@ -11,6 +11,16 @@ const VIEW_LABELS: Record<Exclude<RailView, 'sessions'>, string> = {
 
 const DRAG: React.CSSProperties = { WebkitAppRegion: 'drag' } as React.CSSProperties
 const NO_DRAG: React.CSSProperties = { WebkitAppRegion: 'no-drag' } as React.CSSProperties
+
+/** 待处理徽标里的满月图标：月相语言中"满月 = 等待批准"。 */
+function MoonBadge() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+      <circle cx="8" cy="8" r="6" fill="currentColor" />
+      <circle cx="11" cy="6.4" r="4.6" fill="color-mix(in srgb, var(--regolith) 82%, transparent)" />
+    </svg>
+  )
+}
 
 function WindowButton({
   onClick,
@@ -51,16 +61,38 @@ function WindowButton({
   )
 }
 
-/** 无边框窗口标题栏：左字标 + 项目名，右主题开关 + ─□×。整栏可拖拽。 */
+/** 无边框窗口标题栏：左字标 + 项目名 + 链路状态，右待处理入口 + 主题开关 + ─□×。整栏可拖拽。 */
 export function Titlebar() {
   const { locale, theme, setTheme, t } = usePreferences()
   const active = useActiveSession()
   const view = useFarsideStore((s) => s.view)
+  const activeSessionId = useFarsideStore((s) => s.activeSessionId)
+  const connected = useFarsideStore((s) => s.connected)
+  const initialized = useFarsideStore((s) => s.initialized)
+  const approvalQueue = useFarsideStore((s) => s.approvalQueue)
+  const questionQueue = useFarsideStore((s) => s.questionQueue)
   const [isMac, setIsMac] = useState(false)
+  // 纯浏览器预览没有 preload 桥：链路指示只在真实链路下出现
+  const [hasBridge] = useState(() => Boolean(window.api?.agent))
 
   useEffect(() => {
     void window.api?.getAppInfo().then((info) => setIsMac(info.platform === 'darwin'))
   }, [])
+
+  // 不在当前视线内的待处理项（其他会话，或当前停在设置/目标页）：一键跳转过去处理
+  const pendingElsewhere = useMemo(
+    () =>
+      [...approvalQueue, ...questionQueue].filter(
+        (item) => item.sessionId !== activeSessionId || view !== 'sessions'
+      ),
+    [approvalQueue, questionQueue, activeSessionId, view]
+  )
+  const jumpToPending = () => {
+    const target = pendingElsewhere[0]
+    if (!target) return
+    useFarsideStore.getState().setView('sessions')
+    useFarsideStore.getState().setActiveSession(target.sessionId)
+  }
 
   return (
     <header
@@ -105,9 +137,52 @@ export function Titlebar() {
             {view !== 'sessions' ? ` / ${t(VIEW_LABELS[view])}` : ''}
           </span>
         ) : null}
+        {hasBridge && initialized && !connected ? (
+          <span
+            role="status"
+            title={t('链路中断') + ' · ' + t('重连中')}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              marginLeft: 4,
+              flexShrink: 0,
+              fontSize: 10.5,
+              color: 'var(--redshift)',
+              letterSpacing: '0.04em'
+            }}
+          >
+            <span aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--redshift)', display: 'inline-block' }} />
+            {t('链路中断')} · {t('重连中')}
+          </span>
+        ) : null}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+        {pendingElsewhere.length ? (
+          <button
+            type="button"
+            onClick={jumpToPending}
+            aria-label={`${t('有会话等待你的确认')}（${pendingElsewhere.length}）`}
+            title={t('有会话等待你的确认')}
+            style={{
+              ...NO_DRAG,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              marginRight: 9,
+              padding: '3px 10px',
+              border: '1px solid color-mix(in srgb, var(--flare) 55%, var(--line))',
+              borderRadius: 999,
+              background: 'color-mix(in srgb, var(--flare) 12%, var(--regolith))',
+              color: 'var(--flare)',
+              fontSize: 11
+            }}
+          >
+            <MoonBadge />
+            {pendingElsewhere.length} {t('待处理')}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
