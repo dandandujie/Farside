@@ -91,6 +91,8 @@ export const IPC = {
   ConnectionTest: 'connection:test',
   ConnectionConnect: 'connection:connect',
   ConnectionDisconnect: 'connection:disconnect',
+  /** 审批/提问等待时的系统注意力引导（通知、任务栏闪烁、badge），窗口未聚焦才生效。 */
+  AppNotifyAttention: 'app:notify-attention',
   /** Kimi Server 增量事件，经主进程归一化后推送给渲染进程。 */
   AgentUpdate: 'agent:update'
 } as const
@@ -526,6 +528,16 @@ export interface AccountProfileResult extends AgentActionResult {
   profile?: AccountProfileStats
 }
 
+/** 审批/提问等待的注意力引导负载；主进程在窗口未聚焦时发系统通知并闪任务栏。 */
+export interface AttentionNotice {
+  kind: 'approval' | 'question'
+  /** 渲染层按当前语言拼好的通知标题与正文（主进程语言无关）。 */
+  title: string
+  body: string
+  /** 当前全部待处理（审批+提问）数量，用于 dock/taskbar badge。 */
+  pendingCount: number
+}
+
 export type AgentUpdate =
   | { kind: 'session-upsert'; session: Session }
   | { kind: 'session-patch'; sessionId: string; patch: Partial<Session> }
@@ -611,6 +623,7 @@ export interface IpcInvokeMap {
   [IPC.ConnectionTest]: { args: [id: string]; result: ConnectionResult }
   [IPC.ConnectionConnect]: { args: [id: string]; result: ConnectionResult }
   [IPC.ConnectionDisconnect]: { args: []; result: ConnectionResult }
+  [IPC.AppNotifyAttention]: { args: [input: AttentionNotice]; result: void }
 }
 
 // ── preload 暴露给渲染端的 API 形状 ────────────────────────────────
@@ -633,6 +646,10 @@ export interface FarsideApi {
     toggleMaximize(): Promise<boolean>
     close(): Promise<void>
     isMaximized(): Promise<boolean>
+  }
+  /** 审批/提问等待的注意力引导；窗口未聚焦时主进程发系统通知并闪任务栏。 */
+  attention: {
+    notify(input: AttentionNotice): Promise<void>
   }
   /** 发现本机 CLI 既有会话；目录不存在或全部解析失败时返回空数组 */
   discoverSessions(): Promise<DiscoveredSession[]>

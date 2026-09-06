@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import {
   IPC,
   type AgentUpdate,
+  type AttentionNotice,
   type ConfigurationSnapshot,
   type FarsideApi,
   type PtyDataPayload
@@ -29,6 +30,9 @@ const api: FarsideApi = {
     toggleMaximize: () => ipcRenderer.invoke(IPC.WindowToggleMaximize),
     close: () => ipcRenderer.invoke(IPC.WindowClose),
     isMaximized: () => ipcRenderer.invoke(IPC.WindowIsMaximized)
+  },
+  attention: {
+    notify: (input: AttentionNotice) => ipcRenderer.invoke(IPC.AppNotifyAttention, input)
   },
   discoverSessions: () => ipcRenderer.invoke(IPC.SessionsDiscover),
   pty: {

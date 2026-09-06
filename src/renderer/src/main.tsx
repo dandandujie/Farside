@@ -9,11 +9,14 @@ import './styles/tokens.css'
 import './styles/base.css'
 import App from './App'
 import { PreferencesProvider } from './lib/preferences'
+import { ErrorBoundary } from './components/shell/ErrorBoundary'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <PreferencesProvider>
-      <App />
-    </PreferencesProvider>
+    <ErrorBoundary variant="app">
+      <PreferencesProvider>
+        <App />
+      </PreferencesProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 )

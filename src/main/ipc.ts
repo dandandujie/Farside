@@ -10,7 +10,7 @@ import {
   type IpcMainInvokeEvent,
   type OpenDialogOptions
 } from 'electron'
-import { IPC, type AppInfo, type ConfigurationSnapshot } from '@shared/ipc'
+import { IPC, type AppInfo, type AttentionNotice, type ConfigurationSnapshot } from '@shared/ipc'
 import { detectCli } from './services/cli-detect'
 import { discoverSessions } from './services/sessions'
 import { PtyService } from './services/pty'
@@ -19,6 +19,7 @@ import { KimiClientService } from './services/kimi-client'
 import { ConfigurationService, CONFIGURATION_PATHS } from './services/configuration'
 import { ConnectionService } from './services/connection'
 import { UpdateService } from './services/update'
+import { AttentionService } from './services/attention'
 import { isPathWithin, isSafeOpenTarget, isTrustedRendererUrl } from './security'
 import { markRendererConfirmedClose } from './services/close-guard'
 
@@ -28,6 +29,7 @@ const kimiClient = new KimiClientService(serverService)
 const configurationService = new ConfigurationService()
 const connectionService = new ConnectionService(serverService, () => kimiClient.reconnectBackend())
 const updateService = new UpdateService()
+const attentionService = new AttentionService()
 let configurationWatchStarted = false
 const rendererUrl = process.env['ELECTRON_RENDERER_URL'] || pathToFileURL(join(__dirname, '../renderer/index.html')).href
 
@@ -129,6 +131,16 @@ export function registerIpcHandlers(): void {  if (!configurationWatchStarted) {
 
   ipcMain.handle(IPC.WindowIsMaximized, (event): boolean => {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false
+  })
+
+  ipcMain.handle(IPC.AppNotifyAttention, (event, input: AttentionNotice) => {
+    if (!input || typeof input !== 'object') return
+    attentionService.notify(event.sender, {
+      kind: input.kind === 'question' ? 'question' : 'approval',
+      title: typeof input.title === 'string' && input.title ? input.title.slice(0, 120) : 'Farside',
+      body: typeof input.body === 'string' ? input.body.slice(0, 200) : '',
+      pendingCount: Number.isFinite(input.pendingCount) ? Math.max(1, Math.floor(input.pendingCount)) : 1
+    })
   })
 
   ipcMain.handle(IPC.CliDetect, () => detectCli())
@@ -294,12 +306,14 @@ export function registerIpcHandlers(): void {  if (!configurationWatchStarted) {
   ipcMain.handle(IPC.ConnectionConnect, (_event, id) => connectionService.connect(id))
   ipcMain.handle(IPC.ConnectionDisconnect, () => connectionService.disconnect())
 
-  // 退出前清场：杀掉所有终端进程与本 App 拉起的 server
-  app.once('before-quit', () => {
-    ptyService.disposeAll()
-    kimiClient.dispose()
-    connectionService.dispose()
-    serverService.dispose()
-    configurationService.dispose()
-  })
+  /** 退出前清场：杀掉所有终端进程与本 App 拉起的 server。崩溃路径同样调用。 */
+  app.once('before-quit', () => disposeServicesForShutdown())
+}
+
+export function disposeServicesForShutdown(): void {
+  ptyService.disposeAll()
+  kimiClient.dispose()
+  connectionService.dispose()
+  serverService.dispose()
+  configurationService.dispose()
 }

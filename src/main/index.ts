@@ -4,6 +4,7 @@ import { app, dialog, shell, BrowserWindow } from 'electron'
 import { isAllowedExternalUrl, isAllowedPreviewUrl } from '@shared/security'
 import { hasActiveAgentWork, registerIpcHandlers } from './ipc'
 import { isRendererConfirmedClose, markRendererConfirmedClose } from './services/close-guard'
+import { loadWindowState, saveWindowState } from './services/window-state'
 import { isTrustedRendererUrl } from './security'
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
@@ -12,6 +13,34 @@ const rendererUrl = isDev
   ? process.env['ELECTRON_RENDERER_URL'] as string
   : pathToFileURL(rendererPath).href
 const smokeMode = process.env['FARSIDE_SMOKE_TEST']
+
+// ── 主进程兜底：任何未捕获异常不再静默丢栈，也不无声地丢掉正在运行的任务 ──
+let errorBoxShown = false
+process.on('uncaughtException', (error) => {
+  console.error('[farside] 主进程未捕获异常', error)
+  if (errorBoxShown || smokeMode) return
+  errorBoxShown = true
+  // 与 VS Code 同策略：记录并提示，但不立刻退出——正在运行的 Agent 任务、
+  // 终端与本地服务比"理论上的状态污染"更值得保住。真正致命的退出路径仍走
+  // before-quit 清场（回收终端与自启 server）。
+  try {
+    dialog.showErrorBox(
+      'Farside 遇到内部错误',
+      `${error.message || String(error)}\n\n应用会继续运行；若功能异常，请保存工作后重启。`
+    )
+  } catch {
+    // 弹窗失败时保持静默，栈已打到 stderr
+  }
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[farside] 主进程未处理的 Promise 拒绝', reason)
+})
+app.on('child-process-gone', (_event, details) => {
+  // GPU/渲染进程由各自路径处理；这里只留诊断线索
+  if (details.type === 'Utility' || details.type === 'GPU') {
+    console.error(`[farside] 子进程退出 ${details.type} ${details.reason}`)
+  }
+})
 
 function openExternal(url: string): void {
   if (smokeMode) return
@@ -31,9 +60,14 @@ function lockPreviewPermissions(contents: Electron.WebContents): void {
 }
 
 function createWindow(): void {
+  const saved = loadWindowState()
   const mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: saved.width,
+    height: saved.height,
+    // 上次是最大化时忽略还原位置，由 maximize() 恢复；否则恢复保存的位置
+    ...(saved.x !== undefined && saved.y !== undefined && !saved.isMaximized
+      ? { x: saved.x, y: saved.y }
+      : {}),
     minWidth: 1080,
     minHeight: 700,
     show: false,
@@ -48,6 +82,39 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true
+    }
+  })
+  if (saved.isMaximized) mainWindow.maximize()
+
+  // 位置/尺寸持久化：close 在被守卫 preventDefault 时也会触发，重复写是幂等的
+  mainWindow.on('close', () => saveWindowState(mainWindow))
+
+  // 审批等待期间设置的 badge/任务栏闪烁，在用户回到窗口时清除
+  mainWindow.on('focus', () => {
+    app.setBadgeCount(0)
+    mainWindow.flashFrame(false)
+  })
+
+  // 渲染进程崩溃不再白屏无提示：短窗口内自动重载，反复崩溃才升级为人工处理
+  let rendererCrashCount = 0
+  let lastRendererCrashAt = 0
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return
+    console.error('[farside] 渲染进程异常退出', details.reason)
+    const now = Date.now()
+    if (now - lastRendererCrashAt > 300_000) rendererCrashCount = 0
+    lastRendererCrashAt = now
+    rendererCrashCount += 1
+    if (rendererCrashCount <= 3) {
+      setTimeout(() => {
+        if (!mainWindow.isDestroyed()) mainWindow.webContents.reload()
+      }, 400)
+    } else if (!errorBoxShown) {
+      errorBoxShown = true
+      dialog.showErrorBox(
+        'Farside 界面反复崩溃',
+        '界面进程多次异常退出，已停止自动恢复。请重启应用；若持续出现，请通过会话导出的诊断日志反馈。'
+      )
     }
   })
 
