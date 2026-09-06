@@ -233,14 +233,14 @@ export function Composer() {
   }
 
   const onTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 中文输入法组词期间的按键只上屏/选词，不触发发送、切换或选择
+    if (e.nativeEvent.isComposing) return
     // Shift+Tab 切换计划模式（任何状态下都生效）
     if (e.key === 'Tab' && e.shiftKey) {
       e.preventDefault()
       togglePlanMode()
       return
     }
-    // 中文输入法组词期间的 Enter 只上屏，不触发发送/选择
-    if (e.nativeEvent.isComposing) return
 
     if (slashOpen) {
       if (e.key === 'ArrowDown') {

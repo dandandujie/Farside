@@ -14,7 +14,8 @@
   --color-line-hi: #2e313d;
   --color-moonlight: #f0f1f4;
   --color-dust: #a3a7b1;
-  --color-faint: #61656f;
+  /* WCAG AA：--faint 承载 9-12px 辅助正文，须在 --void/--mare/--regolith 上 ≥4.5:1 */
+  --color-faint: #7d818c;
   --color-ghost: #3a3d47;
   --color-redshift: #e06a6a;
   --color-flare: #d9a05b;
@@ -37,7 +38,8 @@
   --line-hi: #2e313d;
   --moonlight: #f0f1f4;
   --dust: #a3a7b1;
-  --faint: #61656f;
+  /* WCAG AA（≥4.5:1，对 --void/--mare/--regolith 均 4.6:1 以上） */
+  --faint: #7d818c;
   --ghost: #3a3d47;
   --prism: linear-gradient(
     90deg,
@@ -64,7 +66,8 @@
   --line-hi: #bfc1ba;
   --moonlight: #17191f;
   --dust: #3e424b;
-  --faint: #717680;
+  /* WCAG AA（对 --void #f4f4f0 与 --regolith #ffffff 均 ≥4.5:1） */
+  --faint: #6b7078;
   --ghost: #a4a8ae;
   --redshift: #b94343;
   --flare: #a66b23;

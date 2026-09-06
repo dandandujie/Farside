@@ -883,5 +883,7 @@ button {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    /* JS 平滑滚动由 lib/motion.ts 降级；这里兜住 CSS scroll-behavior（如 .swarm-grid）。 */
+    scroll-behavior: auto !important;
   }
 }

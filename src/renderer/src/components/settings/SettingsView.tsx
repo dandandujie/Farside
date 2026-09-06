@@ -116,6 +116,9 @@ function UsageMeter({ label, usedPct, resetAt }: { label: string; usedPct: numbe
   )
 }
 
+/** 配置编辑器是否有未保存改动；设置页 Esc 返回前读取，避免静默丢弃草稿。 */
+let settingsEditorDirty = false
+
 const KIMI_CONSOLE_URL = 'https://www.kimi.com/code/console'
 const KIMI_QUOTA_URL = 'https://www.kimi.com/membership/subscription?tab=quota'
 
@@ -205,13 +208,13 @@ function AccountActivity() {
               {label}
             </button>
           ))}
-          <span className="mono" style={{ margin: '0 0 11px auto', fontSize: 9.5, color: 'var(--ghost)' }}>
+          <span className="mono" style={{ margin: '0 0 11px auto', fontSize: 9.5, color: 'var(--faint)' }}>
             {english ? 'THIS DEVICE · LAST 24' : '仅本机 · 最近 24 条'}
           </span>
         </div>
         {rows.length ? (
           <div style={{ maxHeight: 288, overflowY: 'auto' }}>
-            <div className="mono" style={{ minWidth: 650, display: 'grid', gridTemplateColumns: 'minmax(150px,1.1fr) 92px minmax(140px,1fr) 145px 68px', gap: 10, padding: '8px 11px', borderBottom: '1px solid var(--line)', color: 'var(--ghost)', fontSize: 9 }}>
+            <div className="mono" style={{ minWidth: 650, display: 'grid', gridTemplateColumns: 'minmax(150px,1.1fr) 92px minmax(140px,1fr) 145px 68px', gap: 10, padding: '8px 11px', borderBottom: '1px solid var(--line)', color: 'var(--faint)', fontSize: 9 }}>
               <span>{english ? 'SESSION' : '会话'}</span><span>{english ? 'SOURCE' : '来源'}</span><span>{tab === 'model' ? (english ? 'MODEL' : '模型') : (english ? 'TOOL' : '工具')}</span><span>{english ? 'TIME / DETAIL' : '时间 / 详情'}</span><span>{english ? 'STATUS' : '状态'}</span>
             </div>
             {rows.map((row) => (
@@ -310,7 +313,7 @@ function AccountPanel({ info }: { info: AppInfo | null }) {
               </div>
               {apiProviders.length ? apiProviders.map((provider) => (
                 <div key={provider.id} style={{ minHeight: 54, padding: '9px 12px', borderTop: '1px solid var(--line)', display: 'grid', gridTemplateColumns: 'minmax(130px,1fr) minmax(180px,1.4fr) 90px', gap: 12, alignItems: 'center' }}>
-                  <div><div style={{ color: 'var(--moonlight)', fontSize: 11.5 }}>{provider.label}</div><div className="mono" style={{ marginTop: 3, color: 'var(--ghost)', fontSize: 9.5 }}>{provider.id}</div></div>
+                  <div><div style={{ color: 'var(--moonlight)', fontSize: 11.5 }}>{provider.label}</div><div className="mono" style={{ marginTop: 3, color: 'var(--faint)', fontSize: 9.5 }}>{provider.id}</div></div>
                   <span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontSize: 10 }}>{provider.baseUrl ?? 'https://api.moonshot.cn/v1'}</span>
                   <span style={{ color: provider.status === 'connected' ? 'var(--signal)' : 'var(--redshift)', fontSize: 10.5 }}>
                     {provider.hasCredential ? (english ? 'Key connected' : '密钥已接入') : (english ? 'No key' : '未接入')}
@@ -332,7 +335,7 @@ function AccountPanel({ info }: { info: AppInfo | null }) {
             <div style={{ minHeight: 64, padding: '11px 13px', border: '1px solid var(--line)', borderRadius: 9, background: 'var(--regolith)', display: 'grid', gridTemplateColumns: 'minmax(180px,1fr) minmax(150px,.8fr) 90px', gap: 14, alignItems: 'center' }}>
               <div>
                 <div style={{ color: 'var(--moonlight)', fontSize: 11.5 }}>Farside Desktop · {info ? `${info.platform} ${info.arch}` : '—'}</div>
-                <div className="mono" style={{ marginTop: 4, color: 'var(--ghost)', fontSize: 9.5 }}>{info ? `Farside ${info.appVersion} · Electron ${info.electronVersion}` : 'LOCAL DEVICE'}</div>
+                <div className="mono" style={{ marginTop: 4, color: 'var(--faint)', fontSize: 9.5 }}>{info ? `Farside ${info.appVersion} · Electron ${info.electronVersion}` : 'LOCAL DEVICE'}</div>
               </div>
               <div style={{ color: 'var(--faint)', fontSize: 10.5 }}>{active?.label ?? (english ? 'No active provider' : '未连接 Provider')}</div>
               <span style={{ color: account?.configured ? 'var(--signal)' : 'var(--faint)', fontSize: 10.5 }}>{account?.configured ? (english ? 'This device' : '当前设备') : (english ? 'Offline' : '未登录')}</span>
@@ -526,7 +529,7 @@ function ProfilePanel() {
                   )
                 })}
               </div>
-              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 5, color: 'var(--ghost)', fontSize: 9.5 }}>
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 5, color: 'var(--faint)', fontSize: 9.5 }}>
                 <span>{english ? 'Less' : '较少'}</span>
                 {[0, 25, 45, 65, 90].map((level) => <span key={level} style={{ width: 9, height: 9, borderRadius: 2, background: level ? `color-mix(in srgb, var(--moonlight) ${level}%, var(--mare))` : 'var(--mare)', border: '1px solid var(--line)' }} />)}
                 <span>{english ? 'More' : '较多'}</span>
@@ -570,7 +573,7 @@ function ProfilePanel() {
             </ConsoleSection>
           </div>
 
-          <p style={{ margin: '-6px 2px 4px', color: error ? 'var(--redshift)' : 'var(--ghost)', fontSize: 9.5, lineHeight: 1.6 }}>
+          <p style={{ margin: '-6px 2px 4px', color: error ? 'var(--redshift)' : 'var(--faint)', fontSize: 9.5, lineHeight: 1.6 }}>
             {error || (english
               ? 'Statistics stay on this device and are derived from ~/.kimi-code/sessions. Deleted or remote-only sessions are not included.'
               : '统计仅在本机计算，来源为 ~/.kimi-code/sessions；已删除或仅存在于远端的会话不会计入。')}
@@ -603,7 +606,7 @@ function mcpKind(config: McpServerConfig): string {
 function ExtensionRow({ title, subtitle, meta, children }: { title: string; subtitle?: string; meta?: string; children: ReactNode }) {
   return (
     <div style={{ minHeight: 58, padding: '9px 11px', border: '1px solid var(--line)', borderRadius: 7, background: 'color-mix(in srgb, var(--regolith) 82%, transparent)', display: 'flex', alignItems: 'center', gap: 11 }}>
-      <div style={{ minWidth: 0 }}><div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}><strong className="mono" style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--moonlight)' }}>{title}</strong>{meta ? <span className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)' }}>{meta}</span> : null}</div>{subtitle ? <div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div> : null}</div>
+      <div style={{ minWidth: 0 }}><div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}><strong className="mono" style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--moonlight)' }}>{title}</strong>{meta ? <span className="mono" style={{ fontSize: 9.5, color: 'var(--faint)' }}>{meta}</span> : null}</div>{subtitle ? <div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div> : null}</div>
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>{children}</div>
     </div>
   )
@@ -729,7 +732,7 @@ function ExtensionCenter({ snapshot, onSnapshot, initialTab }: { snapshot: Confi
     { id: 'plugins', label: 'Plugins', count: snapshot.plugins.length },
     { id: 'market', label: t('发现市场') }
   ]
-  return <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}><PanelTitle eyebrow="Extension Control" title={t('扩展中心')} note={t('从发现、安装到启停和移除的完整闭环')} actions={<button style={buttonStyle} onClick={() => void window.api?.configuration.open(tab === 'skills' ? 'skills' : tab === 'plugins' ? 'plugins' : 'mcp')}>{t('在资源管理器中打开')}</button>} /><div style={{ height: 43, padding: '0 18px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'end', gap: 18 }}>{tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} style={{ height: 43, borderBottom: tab === item.id ? '1px solid var(--moonlight)' : '1px solid transparent', color: tab === item.id ? 'var(--moonlight)' : 'var(--faint)', fontSize: 11.5 }}>{item.label}{item.count !== undefined ? <span className="mono" style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--ghost)' }}>{item.count}</span> : null}</button>)}</div><div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>{tab === 'mcp' ? <McpManager snapshot={snapshot} onSnapshot={onSnapshot} /> : null}{tab === 'skills' ? <SkillManager snapshot={snapshot} onSnapshot={onSnapshot} /> : null}{tab === 'plugins' ? <PluginManager snapshot={snapshot} onSnapshot={onSnapshot} /> : null}{tab === 'market' ? <MarketPanel /> : null}</div></div>
+  return <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}><PanelTitle eyebrow="Extension Control" title={t('扩展中心')} note={t('从发现、安装到启停和移除的完整闭环')} actions={<button style={buttonStyle} onClick={() => void window.api?.configuration.open(tab === 'skills' ? 'skills' : tab === 'plugins' ? 'plugins' : 'mcp')}>{t('在资源管理器中打开')}</button>} /><div style={{ height: 43, padding: '0 18px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'end', gap: 18 }}>{tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} style={{ height: 43, borderBottom: tab === item.id ? '1px solid var(--moonlight)' : '1px solid transparent', color: tab === item.id ? 'var(--moonlight)' : 'var(--faint)', fontSize: 11.5 }}>{item.label}{item.count !== undefined ? <span className="mono" style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--faint)' }}>{item.count}</span> : null}</button>)}</div><div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16 }}>{tab === 'mcp' ? <McpManager snapshot={snapshot} onSnapshot={onSnapshot} /> : null}{tab === 'skills' ? <SkillManager snapshot={snapshot} onSnapshot={onSnapshot} /> : null}{tab === 'plugins' ? <PluginManager snapshot={snapshot} onSnapshot={onSnapshot} /> : null}{tab === 'market' ? <MarketPanel /> : null}</div></div>
 }
 
 const PROJECT_HOOK_EVENTS: ProjectHookEvent[] = [
@@ -841,7 +844,7 @@ function ProjectHooksManager() {
       <div style={{ maxWidth: 960, display: 'grid', gap: 12 }}>
         <div style={{ padding: 12, border: '1px solid var(--line-hi)', borderRadius: 8, background: 'var(--regolith)', display: 'grid', gridTemplateColumns: 'minmax(180px, .7fr) minmax(220px, 1.3fr) auto', gap: 9, alignItems: 'center' }}>
           <div>
-            <div className="mono" style={{ fontSize: 9, color: 'var(--ghost)', letterSpacing: '.14em' }}>PROJECT SCOPE</div>
+            <div className="mono" style={{ fontSize: 9, color: 'var(--faint)', letterSpacing: '.14em' }}>PROJECT SCOPE</div>
             <div style={{ marginTop: 4, color: 'var(--dust)', fontSize: 10.5 }}>{english ? 'Each project owns its hooks file.' : '每个项目独立维护 Hooks 文件。'}</div>
           </div>
           <select style={inputStyle} value={root} onChange={(event) => setRoot(event.target.value)}>
@@ -849,7 +852,7 @@ function ProjectHooksManager() {
             {projects.map((project) => <option key={project.id} value={project.root}>{project.name} · {project.root}</option>)}
           </select>
           <button type="button" style={buttonStyle} disabled={!root} onClick={() => { setAdding((value) => !value); setEditingHookId(''); setDraft({ id: '', event: 'PostToolUse', matcher: '', command: '', commandWindows: '', timeoutSec: 30, async: false, enabled: true, statusMessage: '' }) }}>{adding ? t('取消') : t('+ 添加 Hook')}</button>
-          <span className="mono" style={{ gridColumn: '2 / 4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ghost)', fontSize: 9.5 }}>{path || (root ? `${root}/.farside/hooks.json` : '—')}</span>
+          <span className="mono" style={{ gridColumn: '2 / 4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--faint)', fontSize: 9.5 }}>{path || (root ? `${root}/.farside/hooks.json` : '—')}</span>
         </div>
 
         {adding ? (
@@ -875,7 +878,7 @@ function ProjectHooksManager() {
             <div key={hook.id} style={{ minHeight: 68, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)', display: 'grid', gridTemplateColumns: 'minmax(140px,.6fr) minmax(250px,1.4fr) auto', gap: 12, alignItems: 'center' }}>
               <div>
                 <div className="mono" style={{ color: 'var(--moonlight)', fontSize: 11 }}>{hook.id}</div>
-                <div className="mono" style={{ marginTop: 5, color: 'var(--ghost)', fontSize: 9 }}>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ''}</div>
+                <div className="mono" style={{ marginTop: 5, color: 'var(--faint)', fontSize: 9 }}>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ''}</div>
               </div>
               <div style={{ minWidth: 0 }}>
                 <div className="mono" title={hook.command} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dust)', fontSize: 10.5 }}>{hook.command}</div>
@@ -892,7 +895,7 @@ function ProjectHooksManager() {
         </div>
         {warnings.map((warning) => <div key={warning} style={{ padding: '7px 9px', borderLeft: '2px solid var(--flare)', color: 'var(--faint)', fontSize: 10 }}>{warning}</div>)}
         <StatusLine error={/失败|无效|不能|required|failed/i.test(status)}>{status}</StatusLine>
-        <p style={{ margin: 0, color: 'var(--ghost)', fontSize: 9.5, lineHeight: 1.6 }}>{english ? 'Schema follows Codex hook events and command fields. Files are stored per project under .farside/hooks.json.' : '字段设计参考 Codex Hooks 的事件、matcher 与 command 结构；配置按项目保存在 .farside/hooks.json。'}</p>
+        <p style={{ margin: 0, color: 'var(--faint)', fontSize: 9.5, lineHeight: 1.6 }}>{english ? 'Schema follows Codex hook events and command fields. Files are stored per project under .farside/hooks.json.' : '字段设计参考 Codex Hooks 的事件、matcher 与 command 结构；配置按项目保存在 .farside/hooks.json。'}</p>
       </div>
     </div>
   )
@@ -908,6 +911,10 @@ function ConfigurationEditor({ snapshot, onSnapshot }: { snapshot: Configuration
   const [status, setStatus] = useState('已连接磁盘监听')
   const dirty = target !== 'hooks' && draft !== content
   const editableTarget: ConfigurationTarget | null = target === 'hooks' ? null : target
+  useEffect(() => {
+    settingsEditorDirty = dirty
+    return () => { settingsEditorDirty = false }
+  }, [dirty])
   useEffect(() => {
     // 磁盘推送新内容时不得静默覆盖未保存草稿；保留编辑并提示冲突。
     if (!editableTarget) return
@@ -951,7 +958,7 @@ function ConfigurationEditor({ snapshot, onSnapshot }: { snapshot: Configuration
     hooks: { label: 'Hooks', note: '按项目管理生命周期命令、匹配规则与启停状态' }
   }
   const targets = Object.keys(meta) as Array<ConfigurationTarget | 'hooks'>
-  return <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}><PanelTitle eyebrow="Disk Source of Truth" title={t('配置文件')} note={t('本地文件与编辑器双向热同步；项目 Hooks 独立存储')} actions={target === 'hooks' ? <StatusLine>{t('PROJECT SCOPED')}</StatusLine> : <><StatusLine error={status.includes('失败')}>{dirty ? t('未保存改动') : status}</StatusLine><button style={buttonStyle} onClick={() => void window.api?.configuration.open(target)}>{t('系统中打开')}</button><button style={{ ...buttonStyle, color: 'var(--moonlight)' }} disabled={!dirty} onClick={save}>{t('保存')}</button></>} /><div style={{ minHeight: 52, padding: '0 18px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 7 }}>{targets.map((id) => <button key={id} onClick={() => switchTarget(id)} style={{ padding: '6px 9px', borderRadius: 6, border: `1px solid ${target === id ? 'var(--line-hi)' : 'transparent'}`, background: target === id ? 'var(--regolith)' : 'transparent', color: target === id ? 'var(--moonlight)' : 'var(--faint)', fontSize: 11 }}>{meta[id].label}</button>)}<span className="mono" style={{ marginLeft: 'auto', maxWidth: '46%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: 'var(--ghost)' }}>{target === 'hooks' ? '.farside/hooks.json' : snapshot.paths[target]}</span></div>{target === 'hooks' ? <div style={{ flex: 1, minHeight: 0 }}><ProjectHooksManager /></div> : <div style={{ flex: 1, minHeight: 0, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}><div style={{ display: 'flex', alignItems: 'center' }}><span style={{ fontSize: 11, color: 'var(--faint)' }}>{t(meta[target].note)}</span><span className="mono" style={{ marginLeft: 'auto', fontSize: 9.5, color: 'var(--ghost)' }}>LIVE · {new Date(snapshot.updatedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div><textarea value={draft} onChange={(event) => { if (editableTarget) setDraftByTarget((previous) => ({ ...previous, [editableTarget]: event.target.value })) }} spellCheck={false} style={{ flex: 1, minHeight: 0, width: '100%', resize: 'none', padding: 13, border: '1px solid var(--line)', borderRadius: 7, background: 'var(--mare)', color: 'var(--dust)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.65, outline: 'none' }} /></div>}</div>
+  return <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}><PanelTitle eyebrow="Disk Source of Truth" title={t('配置文件')} note={t('本地文件与编辑器双向热同步；项目 Hooks 独立存储')} actions={target === 'hooks' ? <StatusLine>{t('PROJECT SCOPED')}</StatusLine> : <><StatusLine error={status.includes('失败')}>{dirty ? t('未保存改动') : status}</StatusLine><button style={buttonStyle} onClick={() => void window.api?.configuration.open(target)}>{t('系统中打开')}</button><button style={{ ...buttonStyle, color: 'var(--moonlight)' }} disabled={!dirty} onClick={save}>{t('保存')}</button></>} /><div style={{ minHeight: 52, padding: '0 18px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 7 }}>{targets.map((id) => <button key={id} onClick={() => switchTarget(id)} style={{ padding: '6px 9px', borderRadius: 6, border: `1px solid ${target === id ? 'var(--line-hi)' : 'transparent'}`, background: target === id ? 'var(--regolith)' : 'transparent', color: target === id ? 'var(--moonlight)' : 'var(--faint)', fontSize: 11 }}>{meta[id].label}</button>)}<span className="mono" style={{ marginLeft: 'auto', maxWidth: '46%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: 'var(--faint)' }}>{target === 'hooks' ? '.farside/hooks.json' : snapshot.paths[target]}</span></div>{target === 'hooks' ? <div style={{ flex: 1, minHeight: 0 }}><ProjectHooksManager /></div> : <div style={{ flex: 1, minHeight: 0, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}><div style={{ display: 'flex', alignItems: 'center' }}><span style={{ fontSize: 11, color: 'var(--faint)' }}>{t(meta[target].note)}</span><span className="mono" style={{ marginLeft: 'auto', fontSize: 9.5, color: 'var(--faint)' }}>LIVE · {new Date(snapshot.updatedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div><textarea value={draft} onChange={(event) => { if (editableTarget) setDraftByTarget((previous) => ({ ...previous, [editableTarget]: event.target.value })) }} spellCheck={false} style={{ flex: 1, minHeight: 0, width: '100%', resize: 'none', padding: 13, border: '1px solid var(--line)', borderRadius: 7, background: 'var(--mare)', color: 'var(--dust)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.65, outline: 'none' }} /></div>}</div>
 }
 
 function ConnectionPanel() {
@@ -1031,7 +1038,7 @@ function ConnectionPanel() {
           <section style={{ position: 'relative', overflow: 'hidden', minHeight: 168, padding: 18, border: '1px solid var(--line-hi)', borderRadius: 11, background: 'linear-gradient(135deg, color-mix(in srgb, var(--regolith) 94%, var(--signal) 6%), var(--regolith))' }}>
             <div aria-hidden style={{ position: 'absolute', right: -42, top: -70, width: 230, height: 230, border: '1px solid color-mix(in srgb, var(--moonlight) 10%, transparent)', borderRadius: '50%' }} />
             <div aria-hidden style={{ position: 'absolute', right: 6, top: -22, width: 134, height: 134, border: '1px solid color-mix(in srgb, var(--moonlight) 13%, transparent)', borderRadius: '50%' }} />
-            <div className="mono" style={{ position: 'relative', color: 'var(--ghost)', fontSize: 9.5, letterSpacing: '.16em' }}>REMOTE CONTROL</div>
+            <div className="mono" style={{ position: 'relative', color: 'var(--faint)', fontSize: 9.5, letterSpacing: '.16em' }}>REMOTE CONTROL</div>
             <div style={{ position: 'relative', marginTop: 20, display: 'flex', alignItems: 'center', gap: 14 }}>
               <span style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', borderRadius: 9, border: '1px solid var(--line-hi)', background: 'var(--mare)', color: connectionStatus?.state === 'connected' ? 'var(--signal)' : 'var(--moonlight)', fontSize: 17 }}>⌁</span>
               <div>
@@ -1042,7 +1049,7 @@ function ConnectionPanel() {
               </div>
               <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
                 <div style={{ color: connectionStatus?.state === 'connected' ? 'var(--signal)' : 'var(--dust)', fontSize: 11.5 }}>{stateLabel}</div>
-                <div className="mono" style={{ marginTop: 5, color: 'var(--ghost)', fontSize: 9.5 }}>{connectionStatus?.localPort ? `127.0.0.1:${connectionStatus.localPort}` : 'LOOPBACK ONLY'}</div>
+                <div className="mono" style={{ marginTop: 5, color: 'var(--faint)', fontSize: 9.5 }}>{connectionStatus?.localPort ? `127.0.0.1:${connectionStatus.localPort}` : 'LOOPBACK ONLY'}</div>
               </div>
             </div>
             {connectionStatus?.state === 'connected' ? <button type="button" style={{ ...buttonStyle, position: 'relative', marginTop: 19, color: 'var(--redshift)' }} disabled={Boolean(busy)} onClick={() => run('disconnect', english ? 'Returned to the local Kimi Server.' : '已切回本机 Kimi Server', () => window.api!.connection.disconnect(), true)}>{busy === 'disconnect' ? t('断开中…') : t('断开远程控制')}</button> : null}
@@ -1075,7 +1082,7 @@ function ConnectionPanel() {
                   <div key={profile.id} style={{ minHeight: 72, padding: '10px 12px', border: `1px solid ${connected ? 'var(--line-hi)' : 'var(--line)'}`, borderRadius: 8, background: 'var(--regolith)', display: 'grid', gridTemplateColumns: 'minmax(160px,.7fr) minmax(230px,1.3fr) auto', gap: 12, alignItems: 'center' }}>
                     <div>
                       <div style={{ color: 'var(--moonlight)', fontSize: 12 }}>{profile.name}</div>
-                      <div className="mono" style={{ marginTop: 5, color: 'var(--ghost)', fontSize: 9.5 }}>{profile.user}@{profile.host}:{profile.port}</div>
+                      <div className="mono" style={{ marginTop: 5, color: 'var(--faint)', fontSize: 9.5 }}>{profile.user}@{profile.host}:{profile.port}</div>
                     </div>
                     <div>
                       <div className="mono" style={{ color: 'var(--dust)', fontSize: 10 }}>{profile.remoteKimiPath} server run --port {profile.remoteServerPort}</div>
@@ -1122,7 +1129,7 @@ function GeneralPanel({ info, cli, hasApi }: { info: AppInfo | null; cli: CliSta
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 18 }}>
         <div style={{ maxWidth: 820, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div style={{ gridColumn: '1 / -1', padding: 14, border: '1px solid var(--line-hi)', borderRadius: 8, background: 'var(--regolith)' }}>
-            <div className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)', letterSpacing: '.14em' }}>APPEARANCE</div>
+            <div className="mono" style={{ fontSize: 9.5, color: 'var(--faint)', letterSpacing: '.14em' }}>APPEARANCE</div>
             <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '120px 1fr', gap: 10, alignItems: 'center' }}>
               <span style={{ fontSize: 11.5, color: 'var(--dust)' }}>{t('语言')}</span>
               <div style={{ justifySelf: 'start', display: 'flex', padding: 2, border: '1px solid var(--line)', borderRadius: 7, background: 'var(--mare)' }}>{segment<AppLocale>('zh-CN', locale, setLocale, t('中文'))}{segment<AppLocale>('en-US', locale, setLocale, t('英文'))}</div>
@@ -1131,9 +1138,9 @@ function GeneralPanel({ info, cli, hasApi }: { info: AppInfo | null; cli: CliSta
             </div>
             <p style={{ margin: '10px 0 0', fontSize: 10.5, color: 'var(--faint)' }}>{t('默认使用中文与暗黑主题，偏好会保存在本机。')}</p>
           </div>
-          <div style={{ padding: 14, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)' }}><div className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)', letterSpacing: '.14em' }}>LINK STATUS</div><div style={{ marginTop: 12, display: 'grid', gap: 9, fontSize: 11.5 }}>{[['Kimi Code', runtimeLabel], [t('登录态'), cli?.loggedIn === true ? t('已登录') : cli?.loggedIn === false ? t('未登录') : t('无法判定')], [t('桌面端'), info ? `Farside ${info.appVersion}` : '—'], [t('运行时'), info ? `Electron ${info.electronVersion}` : '—']].map(([label, value]) => <div key={label} style={{ display: 'flex', gap: 12 }}><span style={{ color: 'var(--faint)' }}>{label}</span><span className="mono" style={{ marginLeft: 'auto', color: 'var(--dust)' }}>{value}</span></div>)}</div></div>
-          <div style={{ padding: 14, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)' }}><div className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)', letterSpacing: '.14em' }}>PERMISSION</div><div className="mono" style={{ marginTop: 12, fontSize: 12.5, color: 'var(--moonlight)' }}>{permissionLabel}</div><p style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.6, color: 'var(--faint)' }}>{t(permissionMode === 'manual' ? '读类工具自动放行，写入与执行逐项确认。' : permissionMode === 'auto' ? '自动处理审批，适合可信工作区。' : '跳过常规审批，请只在隔离环境使用。')}</p></div>
-          <div style={{ gridColumn: '1 / -1', padding: 14, border: '1px solid var(--line)', borderRadius: 8 }}><div className="mono" style={{ fontSize: 9.5, color: 'var(--ghost)', letterSpacing: '.14em' }}>KEYBOARD</div><div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>{SHORTCUTS.map(([label, keys]) => <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ fontSize: 11.5, color: 'var(--dust)' }}>{t(label)}</span><span style={{ marginLeft: 'auto' }}><Kbd>{keys}</Kbd></span></div>)}</div></div>
+          <div style={{ padding: 14, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)' }}><div className="mono" style={{ fontSize: 9.5, color: 'var(--faint)', letterSpacing: '.14em' }}>LINK STATUS</div><div style={{ marginTop: 12, display: 'grid', gap: 9, fontSize: 11.5 }}>{[['Kimi Code', runtimeLabel], [t('登录态'), cli?.loggedIn === true ? t('已登录') : cli?.loggedIn === false ? t('未登录') : t('无法判定')], [t('桌面端'), info ? `Farside ${info.appVersion}` : '—'], [t('运行时'), info ? `Electron ${info.electronVersion}` : '—']].map(([label, value]) => <div key={label} style={{ display: 'flex', gap: 12 }}><span style={{ color: 'var(--faint)' }}>{label}</span><span className="mono" style={{ marginLeft: 'auto', color: 'var(--dust)' }}>{value}</span></div>)}</div></div>
+          <div style={{ padding: 14, border: '1px solid var(--line)', borderRadius: 8, background: 'var(--regolith)' }}><div className="mono" style={{ fontSize: 9.5, color: 'var(--faint)', letterSpacing: '.14em' }}>PERMISSION</div><div className="mono" style={{ marginTop: 12, fontSize: 12.5, color: 'var(--moonlight)' }}>{permissionLabel}</div><p style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.6, color: 'var(--faint)' }}>{t(permissionMode === 'manual' ? '读类工具自动放行，写入与执行逐项确认。' : permissionMode === 'auto' ? '自动处理审批，适合可信工作区。' : '跳过常规审批，请只在隔离环境使用。')}</p></div>
+          <div style={{ gridColumn: '1 / -1', padding: 14, border: '1px solid var(--line)', borderRadius: 8 }}><div className="mono" style={{ fontSize: 9.5, color: 'var(--faint)', letterSpacing: '.14em' }}>KEYBOARD</div><div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>{SHORTCUTS.map(([label, keys]) => <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ fontSize: 11.5, color: 'var(--dust)' }}>{t(label)}</span><span style={{ marginLeft: 'auto' }}><Kbd>{keys}</Kbd></span></div>)}</div></div>
         </div>
       </div>
     </div>
@@ -1227,14 +1234,14 @@ function AboutPanel({ info }: { info: AppInfo | null }) {
                 <div style={{ marginTop: 13, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 19, letterSpacing: '.28em', color: 'var(--moonlight)' }}>FARSIDE</div>
                 <p style={{ margin: '7px 0 0', color: 'var(--faint)', fontSize: 11.5 }}>{t('月之暗面 · Kimi Code 桌面端')}</p>
               </div>
-              <div className="mono" style={{ color: 'var(--ghost)', fontSize: 9.5, lineHeight: 1.8 }}>
+              <div className="mono" style={{ color: 'var(--faint)', fontSize: 9.5, lineHeight: 1.8 }}>
                 VERSION {info?.appVersion ?? '—'}<br />
                 ELECTRON {info?.electronVersion ?? '—'} · {info ? `${info.platform}/${info.arch}` : 'RUNTIME —'}
               </div>
             </div>
             <div style={{ padding: 20, display: 'grid', alignContent: 'center', gap: 15 }}>
               <div>
-                <div className="mono" style={{ fontSize: 9, letterSpacing: '.15em', color: 'var(--ghost)' }}>UPDATE CHANNEL · GITHUB RELEASES</div>
+                <div className="mono" style={{ fontSize: 9, letterSpacing: '.15em', color: 'var(--faint)' }}>UPDATE CHANNEL · GITHUB RELEASES</div>
                 <div style={{ marginTop: 7, color: updateNotice?.kind === 'failed' ? 'var(--redshift)' : updateInfo ? 'var(--signal)' : 'var(--dust)', fontSize: 12.5 }}>{updateStatus}</div>
               </div>
               <div style={{ height: 1, background: 'var(--line)' }} />
@@ -1256,7 +1263,7 @@ function AboutPanel({ info }: { info: AppInfo | null }) {
           <section style={{ display: 'grid', gap: 9 }}>
             <header style={{ minHeight: 36, display: 'flex', alignItems: 'center', gap: 10 }}>
               <div>
-                <div className="mono" style={{ fontSize: 9, letterSpacing: '.15em', color: 'var(--ghost)' }}>MISSION LOG · RELEASE ARCHIVE</div>
+                <div className="mono" style={{ fontSize: 9, letterSpacing: '.15em', color: 'var(--faint)' }}>MISSION LOG · RELEASE ARCHIVE</div>
                 <h3 style={{ margin: '3px 0 0', fontSize: 13.5, fontWeight: 500, color: 'var(--moonlight)' }}>{english ? 'Changelog & history' : '更新日志与历史版本'}</h3>
               </div>
               <button style={{ ...buttonStyle, marginLeft: 'auto' }} disabled={historyLoading} onClick={loadHistory}>
@@ -1276,7 +1283,7 @@ function AboutPanel({ info }: { info: AppInfo | null }) {
                       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dust)', fontSize: 11.5 }}>{release.name || `Farside v${release.version}`}</span>
                       {release.prerelease ? <span className="mono" style={{ padding: '2px 5px', border: '1px solid var(--flare)', borderRadius: 4, color: 'var(--flare)', fontSize: 8.5 }}>PRE</span> : null}
                       {current ? <span className="mono" style={{ padding: '2px 5px', border: '1px solid var(--line-hi)', borderRadius: 4, color: 'var(--signal)', fontSize: 8.5 }}>{english ? 'CURRENT' : '当前版本'}</span> : null}
-                      <time className="mono" dateTime={release.publishedAt} style={{ marginLeft: 'auto', color: 'var(--ghost)', fontSize: 9.5 }}>{date}</time>
+                      <time className="mono" dateTime={release.publishedAt} style={{ marginLeft: 'auto', color: 'var(--faint)', fontSize: 9.5 }}>{date}</time>
                       <span aria-hidden style={{ color: 'var(--faint)', fontSize: 11 }}>⌄</span>
                     </summary>
                     <div style={{ padding: '13px 14px 15px', borderBottom: '1px solid var(--line)', background: 'var(--mare)' }}>
@@ -1311,6 +1318,20 @@ export function SettingsView() {
   const [cli, setCli] = useState<CliStatus | null>(null)
   const hasApi = typeof window !== 'undefined' && window.api != null
 
+  // Esc 从设置页返回会话视图；正在输入或配置编辑器有未保存改动时不劫持。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (settingsEditorDirty) return
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+      if (target instanceof HTMLElement && target.isContentEditable) return
+      useFarsideStore.getState().setView('sessions')
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   // 斜杠命令/命令面板可以深链到指定分区（如 /plugins → 扩展中心）。
   useEffect(() => {
     if (!settingsRequest) return
@@ -1340,7 +1361,7 @@ export function SettingsView() {
 
   return (
     <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--void)' }}>
-      <div style={{ height: 64, flexShrink: 0, padding: '0 20px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center' }}><div><h1 style={{ margin: 0, fontSize: 18, fontWeight: 500, color: 'var(--moonlight)' }}>{t('设置控制中心')}</h1><p style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--faint)' }}>{t('账户、扩展与磁盘配置分区管理')}</p></div><div className="mono" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, fontSize: 9.5, color: configError ? 'var(--redshift)' : 'var(--ghost)' }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: configError ? 'var(--redshift)' : 'var(--moonlight)' }} />{configError || 'CONFIG WATCH ACTIVE'}</div></div>
+      <div style={{ height: 64, flexShrink: 0, padding: '0 20px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center' }}><div><h1 style={{ margin: 0, fontSize: 18, fontWeight: 500, color: 'var(--moonlight)' }}>{t('设置控制中心')}</h1><p style={{ margin: '4px 0 0', fontSize: 10.5, color: 'var(--faint)' }}>{t('账户、扩展与磁盘配置分区管理')}</p></div><div className="mono" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, fontSize: 9.5, color: configError ? 'var(--redshift)' : 'var(--faint)' }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: configError ? 'var(--redshift)' : 'var(--moonlight)' }} />{configError || 'CONFIG WATCH ACTIVE'}</div></div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
         <nav style={{ width: 196, flexShrink: 0, padding: 10, borderRight: '1px solid var(--line)', background: 'color-mix(in srgb, var(--regolith) 34%, var(--void))', overflowY: 'auto' }}>{NAV.map((item) => <button key={item.id} onClick={() => setSection(item.id)} style={{ width: '100%', minHeight: 52, padding: '8px 9px', marginBottom: 3, border: `1px solid ${section === item.id ? 'var(--line-hi)' : 'transparent'}`, borderRadius: 7, background: section === item.id ? 'var(--regolith)' : 'transparent', textAlign: 'left', display: 'grid', gridTemplateColumns: '23px 1fr', columnGap: 8 }}><span className="mono" style={{ gridRow: '1 / 3', fontSize: 9.5, paddingTop: 2, color: section === item.id ? 'var(--moonlight)' : 'var(--ghost)' }}>{item.mark}</span><span style={{ fontSize: 11.5, color: section === item.id ? 'var(--moonlight)' : 'var(--dust)' }}>{t(item.label)}</span><span style={{ marginTop: 3, fontSize: 9.5, color: 'var(--faint)' }}>{t(item.note)}</span></button>)}</nav>
         <section style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>{section === 'account' ? <AccountPanel info={info} /> : null}{section === 'profile' ? <ProfilePanel /> : null}{section === 'extensions' ? <ExtensionCenter key={extensionTab ?? 'default'} snapshot={snapshot} onSnapshot={setSnapshot} initialTab={extensionTab as ExtensionTab | undefined} /> : null}{section === 'configuration' ? <ConfigurationEditor snapshot={snapshot} onSnapshot={setSnapshot} /> : null}{section === 'connections' ? <ConnectionPanel /> : null}{section === 'general' ? <GeneralPanel info={info} cli={cli} hasApi={hasApi} /> : null}{section === 'about' ? <AboutPanel info={info} /> : null}</section>

@@ -367,7 +367,7 @@ export function EnvironmentSummary({ session }: { session: Session }) {
           </button>
 
           {gitError ? (
-            <div style={{ padding: '3px 3px 7px 31px', fontSize: 9.5, lineHeight: 1.45, color: 'var(--ghost)' }}>{gitError}</div>
+            <div style={{ padding: '3px 3px 7px 31px', fontSize: 9.5, lineHeight: 1.45, color: 'var(--faint)' }}>{gitError}</div>
           ) : null}
 
           <div style={{ height: 1, margin: '9px 0 10px', background: 'var(--line)' }} />
@@ -419,13 +419,13 @@ export function EnvironmentSummary({ session }: { session: Session }) {
               </button>
             ))}
             {!sources.length ? (
-              <div style={{ padding: '8px 3px 7px 31px', color: 'var(--ghost)', fontSize: 10.5 }}>
+              <div style={{ padding: '8px 3px 7px 31px', color: 'var(--faint)', fontSize: 10.5 }}>
                 {english ? 'Attachments and links used in this session appear here.' : '本会话使用过的附件和链接会显示在这里。'}
               </div>
             ) : null}
           </div>
           {sources.length > 4 ? (
-            <button onClick={() => setShowAllSources((value) => !value)} style={{ ...rowStyle, color: 'var(--ghost)' }}>
+            <button onClick={() => setShowAllSources((value) => !value)} style={{ ...rowStyle, color: 'var(--faint)' }}>
               <Icon>
                 <svg width="17" height="17" viewBox="0 0 17 17" fill="none"><circle cx="4" cy="11.5" r="1.5" stroke="currentColor" /><circle cx="8.5" cy="8.5" r="1.5" stroke="currentColor" /><circle cx="13" cy="5.5" r="1.5" stroke="currentColor" /><path d="m5.3 10.6 1.9-1.2M9.8 7.6l1.9-1.2" stroke="currentColor" /></svg>
               </Icon>

@@ -129,7 +129,7 @@ function MiniBrowser({ initialUrl, onClose, english }: { initialUrl: string; onC
           <a href={currentUrl} target="_blank" rel="noreferrer" aria-label={english ? 'Open in system browser' : '在系统浏览器打开'} title={english ? 'Open in system browser' : '在系统浏览器打开'} style={controlStyle()}>↗</a>
           <button onClick={onClose} aria-label={english ? 'Close browser' : '关闭浏览器'} style={controlStyle()}>×</button>
         </div>
-        <div className="mono" style={{ height: 13, marginTop: 4, paddingLeft: 88, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: error ? 'var(--redshift)' : 'var(--ghost)' }}>
+        <div className="mono" style={{ height: 13, marginTop: 4, paddingLeft: 88, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 9.5, color: error ? 'var(--redshift)' : 'var(--faint)' }}>
           {error || pageTitle || (english ? 'Development browser' : '开发浏览器')}
         </div>
         {loading ? <div style={{ position: 'absolute', left: 0, right: 0, bottom: -1, height: 1, background: 'linear-gradient(90deg, transparent, var(--moonlight), transparent)', animation: 'caret-breathe 1s linear infinite' }} /> : null}

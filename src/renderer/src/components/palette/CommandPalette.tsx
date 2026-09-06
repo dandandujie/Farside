@@ -70,6 +70,7 @@ export function CommandPalette() {
   const [query, setQuery] = useState('')
   const [idx, setIdx] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -80,6 +81,22 @@ export function CommandPalette() {
       requestAnimationFrame(() => inputRef.current?.focus())
     }
   }, [open])
+
+  // 焦点圈定：Tab/Shift+Tab 在面板内循环，不会漏进背景界面。
+  const trapTab = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || !panelRef.current) return
+    const focusables = panelRef.current.querySelectorAll<HTMLElement>('input, button:not([disabled])')
+    if (!focusables.length) return
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    if (e.shiftKey && (document.activeElement === first || !panelRef.current.contains(document.activeElement))) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && (document.activeElement === last || !panelRef.current.contains(document.activeElement))) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
 
   // ── 三段列表：动作 → 斜杠命令 → 会话 ────────────────────────────
   const items = useMemo<PaletteItem[]>(() => {
@@ -196,6 +213,7 @@ export function CommandPalette() {
   return (
     <div
       onClick={() => setOpen(false)}
+      role="presentation"
       style={{
         position: 'fixed',
         inset: 0,
@@ -208,6 +226,11 @@ export function CommandPalette() {
       }}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={english ? 'Command palette' : '命令面板'}
+        onKeyDown={trapTab}
         className="fade-in"
         onClick={(e) => e.stopPropagation()}
         style={{
@@ -236,7 +259,11 @@ export function CommandPalette() {
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            aria-label={english ? 'Search actions, slash commands, sessions' : '搜索动作、斜杠命令、会话'}
+            aria-controls="command-palette-list"
             onKeyDown={(e) => {
+              // 中文输入法组词期间的 Enter 只上屏，不触发选择
+              if (e.nativeEvent.isComposing) return
               if (e.key === 'ArrowDown') {
                 e.preventDefault()
                 setIdx((i) => (filtered.length ? (i + 1) % filtered.length : 0))
@@ -258,7 +285,7 @@ export function CommandPalette() {
           />
           <Kbd>esc</Kbd>
         </div>
-        <div ref={listRef} style={{ overflowY: 'auto', padding: 6 }}>
+        <div ref={listRef} id="command-palette-list" role="listbox" aria-label={english ? 'Results' : '结果'} style={{ overflowY: 'auto', padding: 6 }}>
           {filtered.map((item, i) => {
             const header =
               item.group !== lastGroup ? (
@@ -282,6 +309,8 @@ export function CommandPalette() {
                 {header}
                 <button
                   data-active={active || undefined}
+                  role="option"
+                  aria-selected={active}
                   onClick={() => select(item)}
                   onMouseEnter={() => setIdx(i)}
                   style={{

@@ -325,7 +325,7 @@ export function SessionList() {
         ))}
         {archived.length ? (
           <section style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
-            <div className="mono" style={{ padding: '3px 13px 7px', fontSize: 10, color: 'var(--ghost)', letterSpacing: '0.08em' }}>{english ? 'ARCHIVED PROJECTS' : '已归档项目'} · {archived.length}</div>
+            <div className="mono" style={{ padding: '3px 13px 7px', fontSize: 10, color: 'var(--faint)', letterSpacing: '0.08em' }}>{english ? 'ARCHIVED PROJECTS' : '已归档项目'} · {archived.length}</div>
             {archived.map(({ project, sessions: list }) => (
               <ProjectHeader
                 key={project.id}

@@ -223,7 +223,7 @@ export function OrbitRail() {
                   <div key={String(label)}>
                     <div style={{ display: 'flex', fontSize: 10.5, color: 'var(--faint)' }}><span>{t(String(label))}</span><span className="mono" style={{ marginLeft: 'auto', color: 'var(--dust)' }}>{t('剩余')} {Math.round(window.remainingPct)}%</span></div>
                     <div style={{ height: 3, marginTop: 5, borderRadius: 99, background: 'var(--line)' }}><div style={{ width: `${window.usedPct}%`, height: '100%', borderRadius: 99, background: 'var(--moonlight)' }} /></div>
-                    <div className="mono" style={{ marginTop: 4, fontSize: 9.5, color: 'var(--ghost)' }}>
+                    <div className="mono" style={{ marginTop: 4, fontSize: 9.5, color: 'var(--faint)' }}>
                       {locale === 'en-US' ? 'Resets' : '额度刷新'} · {resetLabel(window.resetAt)}
                     </div>
                   </div>
@@ -231,7 +231,7 @@ export function OrbitRail() {
               </div>
             ) : null}
             {usage?.updatedAt ? (
-              <div className="mono" style={{ marginTop: 9, fontSize: 9.5, color: 'var(--ghost)' }}>
+              <div className="mono" style={{ marginTop: 9, fontSize: 9.5, color: 'var(--faint)' }}>
                 {locale === 'en-US' ? 'Usage updated' : '数据更新'} · {new Date(usage.updatedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}
               </div>
             ) : null}

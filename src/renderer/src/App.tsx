@@ -19,6 +19,7 @@ import { NoiseOverlay } from './design-system/NoiseOverlay'
 import { Onboarding } from './components/shell/Onboarding'
 import { UpdatePrompt } from './components/shell/UpdatePrompt'
 import { UndoSelector } from './components/trajectory/UndoSelector'
+import { ErrorBoundary } from './components/shell/ErrorBoundary'
 import { usePreferences } from './lib/preferences'
 import { applyShotScenario } from './lib/devShots'
 
@@ -76,7 +77,7 @@ export default function App() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const state = useFarsideStore.getState()
-      if (e.key === 'Escape' && state.sending) {
+      if (e.key === 'Escape' && state.sending && state.view === 'sessions') {
         const onField =
           e.target instanceof HTMLInputElement ||
           e.target instanceof HTMLTextAreaElement ||
@@ -155,7 +156,8 @@ export default function App() {
                 flex: 1,
                 display: 'flex',
                 flexDirection: 'column',
-                minWidth: 0,
+                // 面板拖得过宽时的底线：主内容区至少 340px，Mission Panel 被裁剪可拖回
+                minWidth: 340,
                 minHeight: 0,
                 overflow: 'hidden',
                 background: 'var(--void)'
@@ -163,7 +165,10 @@ export default function App() {
             >
               {active ? (
                 <>
-                  <TrajectoryView session={active} />
+                  {/* 轨迹渲染的是上游任意形状的事件流：单个畸形事件只损失自己，不拖垮整窗 */}
+                  <ErrorBoundary variant="region">
+                    <TrajectoryView session={active} />
+                  </ErrorBoundary>
                   {activeSessionError ? (
                     <div
                       className="mono"

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { CrescentLogo } from '../../design-system/CrescentLogo'
 import { PrismLine } from '../../design-system/PrismLine'
 import { useFarsideStore } from '../../lib/store'
@@ -14,8 +15,24 @@ export function Onboarding() {
   const authReady = useFarsideStore((state) => state.authReady)
   const onboardingDismissed = useFarsideStore((state) => state.onboardingDismissed)
   const dismissOnboarding = useFarsideStore((state) => state.dismissOnboarding)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const visible = authReady === false && !onboardingDismissed
 
-  if (authReady !== false || onboardingDismissed) return null
+  // Esc 等价"暂不配置"；遮罩出现时把初始焦点交给对话框本体，屏幕阅读器可即时播报。
+  useEffect(() => {
+    if (!visible) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismissOnboarding()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    const timer = window.setTimeout(() => dialogRef.current?.focus(), 0)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      window.clearTimeout(timer)
+    }
+  }, [visible, dismissOnboarding])
+
+  if (!visible) return null
 
   return (
     <div
@@ -31,6 +48,11 @@ export function Onboarding() {
       }}
     >
       <section
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={english ? 'Connect a Kimi provider' : '连接你的 Kimi 链路'}
+        tabIndex={-1}
         style={{
           position: 'relative',
           width: 'min(760px, 100%)',
@@ -38,7 +60,8 @@ export function Onboarding() {
           border: '1px solid var(--line-hi)',
           borderRadius: 12,
           background: 'var(--mare)',
-          boxShadow: '0 28px 80px rgba(0,0,0,0.55)'
+          boxShadow: '0 28px 80px rgba(0,0,0,0.55)',
+          outline: 'none'
         }}
       >
         <PrismLine />

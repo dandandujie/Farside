@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { QuestionAnswer, QuestionRequest } from '@shared/types'
 import { PrismLine } from '../../design-system/PrismLine'
 import { useFarsideStore } from '../../lib/store'
@@ -47,6 +47,24 @@ export function QuestionCard({ request }: { request: QuestionRequest }) {
     resolve(request.id, answers)
   }
 
+  // 单题卡片支持数字键直接选择（与审批卡 1/2/3 的键盘体验对齐）；输入框内不劫持数字。
+  useEffect(() => {
+    if (request.questions.length !== 1) return
+    const question = request.questions[0]
+    if (!question || question.options.length > 9) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+      const index = Number.parseInt(event.key, 10) - 1
+      if (!Number.isInteger(index) || index < 0 || index >= question.options.length) return
+      toggle(question.id, question.options[index].id, question.multiSelect)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+    // eslint 不在链路内；toggle 随每次渲染重建，这里只依赖题目集合即可
+  }, [request])
+
   return (
     <div style={{ padding: '0 20px 10px', flexShrink: 1, minHeight: 0, overflowY: 'auto' }}>
       <section
@@ -94,6 +112,7 @@ export function QuestionCard({ request }: { request: QuestionRequest }) {
                     <button
                       key={option.id}
                       onClick={() => toggle(question.id, option.id, question.multiSelect)}
+                      aria-pressed={active}
                       style={{
                         display: 'flex',
                         alignItems: 'flex-start',

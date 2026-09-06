@@ -61,7 +61,7 @@ export function SessionHeader({ session }: { session: Session }) {
       <span
         className="mono"
         title={session.cwd}
-        style={{ fontSize: 11, color: 'var(--ghost)', flexShrink: 0, letterSpacing: '0.02em' }}
+        style={{ fontSize: 11, color: 'var(--faint)', flexShrink: 0, letterSpacing: '0.02em' }}
       >
         {shortenCwd(session.cwd)}
       </span>
