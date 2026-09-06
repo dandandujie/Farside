@@ -12,7 +12,7 @@ import type {
   SshConnectionSaveInput
 } from '@shared/ipc'
 import { KIMI_SERVER_PORT } from '@shared/ipc'
-import { probeKimiServer, type ServerService } from './server'
+import { probeKimiServer, versionAtLeast, type ServerService } from './server'
 
 const ROOT = process.env['KIMI_CODE_HOME'] || join(homedir(), '.kimi-code')
 const CONNECTIONS_PATH = join(ROOT, 'farside-connections.json')
@@ -138,6 +138,8 @@ async function freeLoopbackPort(): Promise<number> {
 
 export class ConnectionService {
   private tunnel: ChildProcess | null = null
+  /** 0.28+ 远端前台 `kimi web --no-open` 的 ssh 载体；断开时随会话精确回收。 */
+  private remoteServer: ChildProcess | null = null
   private status: ConnectionStatus = { state: 'idle' }
 
   constructor(
@@ -213,6 +215,27 @@ export class ConnectionService {
     return execFileText('ssh', [...sshBaseArgs(profile), sshTarget(profile), command], timeout)
   }
 
+  /**
+   * 0.28 起上游移除了 `kimi server` 命令树，远端同样改用前台
+   * `kimi web --no-open`。版本探测失败时按新生命周期处理：
+   * Farside 唯一 Runtime 基线（0.39）只有前台模式。
+   */
+  private async remoteUsesForegroundWeb(profile: SshConnectionProfile): Promise<boolean> {
+    const version = await this.runRemote(
+      profile,
+      `${remotePath(profile.remoteKimiPath)} --version`,
+      10_000
+    ).catch(() => '')
+    return version === '' ? true : versionAtLeast(version, [0, 28, 0])
+  }
+
+  /** 只回收本服务启动的远端前台进程；关掉 ssh 载体，远端随 SIGHUP 退出。 */
+  private stopRemoteServer(): void {
+    const child = this.remoteServer
+    this.remoteServer = null
+    if (child && child.exitCode === null) child.kill()
+  }
+
   async test(id: string): Promise<ConnectionResult> {
     try {
       const profile = await this.profile(id)
@@ -236,11 +259,27 @@ export class ConnectionService {
     this.status = { state: 'connecting', activeProfileId: id }
     try {
       profile = await this.profile(id)
-      await this.runRemote(
-        profile,
-        `${remotePath(profile.remoteKimiPath)} server run --port ${profile.remoteServerPort}`,
-        30_000
-      )
+      const foreground = await this.remoteUsesForegroundWeb(profile)
+      const startCommand = foreground
+        ? `${remotePath(profile.remoteKimiPath)} web --no-open --port ${profile.remoteServerPort}`
+        : `${remotePath(profile.remoteKimiPath)} server run --port ${profile.remoteServerPort}`
+      let remoteServerError = ''
+      let serverChild: ChildProcess | null = null
+      if (foreground) {
+        // 0.28+ 前台生命周期：持有 ssh 会话；旧的一次性 exec 永远等不到
+        // 前台命令退出，只会把连接拖到超时。
+        serverChild = spawn('ssh', [...sshBaseArgs(profile), sshTarget(profile), startCommand], {
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: process.env
+        })
+        serverChild.stderr?.on('data', (chunk: Buffer) => {
+          remoteServerError = `${remoteServerError}${chunk.toString('utf8')}`.slice(-4_096)
+        })
+      } else {
+        // 0.27 daemon 自行后台化并返回，沿用一次性 exec。
+        await this.runRemote(profile, startCommand, 30_000)
+      }
       const token = (await this.runRemote(
         profile,
         `cat ${remotePath(`${profile.remoteKimiHome}/server.token`)}`,
@@ -262,15 +301,19 @@ export class ConnectionService {
       tunnel.stderr?.on('data', (chunk: Buffer) => {
         tunnelError = `${tunnelError}${chunk.toString('utf8')}`.slice(-8_192)
       })
-      const deadline = Date.now() + 12_000
+      const deadline = Date.now() + 15_000
       while (Date.now() < deadline) {
         if (tunnel.exitCode !== null) throw new Error(tunnelError.trim() || 'SSH 隧道提前退出')
+        // 远端子进程提前退出不立即判死：端口上可能已有可用的既有实例。
         if (await probeKimiServer({ host: '127.0.0.1', port: localPort })) break
         await new Promise((resolve) => setTimeout(resolve, 250))
       }
       if (!(await probeKimiServer({ host: '127.0.0.1', port: localPort }))) {
-        throw new Error(tunnelError.trim() || '远程 Kimi Server 未能通过 SSH 隧道就绪')
+        throw new Error(
+          tunnelError.trim() || remoteServerError.trim() || '远程 Kimi Server 未能通过 SSH 隧道就绪'
+        )
       }
+      this.remoteServer = serverChild
       this.server.activateRemote(localPort, token)
       backendActivated = true
       await this.onBackendChanged()
@@ -278,6 +321,7 @@ export class ConnectionService {
       tunnel.once('exit', () => {
         if (this.tunnel !== tunnel) return
         this.tunnel = null
+        this.stopRemoteServer()
         this.server.deactivateRemote()
         this.status = { state: 'error', activeProfileId: id, error: tunnelError.trim() || 'SSH 隧道已断开' }
         void this.onBackendChanged().catch(() => undefined)
@@ -286,6 +330,7 @@ export class ConnectionService {
     } catch (error) {
       this.tunnel?.kill()
       this.tunnel = null
+      this.stopRemoteServer()
       this.server.deactivateRemote()
       if (backendActivated) await this.onBackendChanged().catch(() => undefined)
       this.status = {
@@ -302,6 +347,7 @@ export class ConnectionService {
       const tunnel = this.tunnel
       this.tunnel = null
       if (tunnel && tunnel.exitCode === null) tunnel.kill()
+      this.stopRemoteServer()
       this.server.deactivateRemote()
       this.status = { state: 'idle' }
       await this.onBackendChanged()
@@ -316,6 +362,7 @@ export class ConnectionService {
     const tunnel = this.tunnel
     this.tunnel = null
     if (tunnel && tunnel.exitCode === null) tunnel.kill()
+    this.stopRemoteServer()
     this.server.deactivateRemote()
   }
 }

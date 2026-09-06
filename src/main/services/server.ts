@@ -53,7 +53,8 @@ async function runKimi(command: string, bundled: boolean, args: string[], timeou
   })
 }
 
-function versionAtLeast(version: string, minimum: readonly [number, number, number]): boolean {
+/** 供远程连接链路复用的 semver 比较；解析失败返回 false。 */
+export function versionAtLeast(version: string, minimum: readonly [number, number, number]): boolean {
   const matched = version.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/)
   if (!matched) return false
   const actual = matched.slice(1, 4).map(Number)
