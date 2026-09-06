@@ -31,12 +31,12 @@ import {
   type TurnChangesResult,
   type WorkspaceCollectionResult,
   type WorkspaceEntry,
-  type WorkspaceInfo,
   type WorkspaceListResult,
   type WorkspaceResult,
   type WorkspaceReadResult
 } from '@shared/ipc'
 import { TurnChangesService } from './turn-changes'
+import { SessionRuntimeStore } from './session-runtime'
 import {
   isAllowedApiBaseUrl,
   MAX_ATTACHMENT_BYTES,
@@ -46,7 +46,6 @@ import {
   MAX_TOTAL_ATTACHMENT_BYTES
 } from '@shared/security'
 import {
-  fromKimiServerModel,
   toKimiServerModel,
   type AccountModelInfo,
   type AccountProfileStats,
@@ -56,7 +55,6 @@ import {
   type ApprovalRequest,
   type Attachment,
   type GoalState,
-  type MoonPhase,
   type QuestionRequest,
   type SatelliteEvent,
   type Session,
@@ -66,742 +64,68 @@ import type { ServerService } from './server'
 import { SUPPORTED_KIMI_WS_PROTOCOL_VERSION } from './runtime-manifest'
 import { resolveOAuthLoginState } from './oauth-login-state'
 import { sanitizeZipFileName } from '../security'
+import {
+  accountProviderKind,
+  approvalFromRemote,
+  attachmentFromBlock,
+  compactActivity,
+  decodedBase64Size,
+  editableToolPaths,
+  eventsFromMessages,
+  exactCost,
+  finiteNumber,
+  fixedPointCny,
+  friendlyRunError,
+  PLAN_LABELS,
+  pricingForModel,
+  usageNumber,
+  internalMessageLabel,
+  isBoundedString,
+  isRecord,
+  localDateKey,
+  parseWireProfile,
+  type WireFileProfileStats,
+  mapRemotePhase,
+  profileReasoningLabel,
+  providerLabel,
+  questionFromRemote,
+  readBoundedResponse,
+  satelliteKind,
+  sessionFromRemote,
+  telemetryFromWire,
+  textOf,
+  tokenUsageTotal,
+  usageWindow,
+  walletCny,
+  workspaceFromRemote,
+  atOf,
+  type ApiEnvelope,
+  type AuthSummaryWire,
+  type PersistedTelemetry,
+  type RemoteApproval,
+  type RemoteModel,
+  type RemoteProvider,
+  type RemoteQuestion,
+  type RemoteSession,
+  type RemoteWorkspace,
+  type SubagentRuntime,
+  type UnknownRecord
+} from './wire-events'
 
 const REQUEST_TIMEOUT_MS = 30_000
 const EXPORT_TIMEOUT_MS = 120_000
 const MAX_EXPORT_BYTES = 256 * 1024 * 1024
 const MAX_WS_PAYLOAD_BYTES = 8 * 1024 * 1024
+// 常规 REST 响应的安全上限；超出即视为服务端异常，防止畸形响应拖垮主进程。
+const MAX_API_RESPONSE_BYTES = 64 * 1024 * 1024
+const RECONNECT_BASE_DELAY_MS = 1_500
+const RECONNECT_MAX_DELAY_MS = 30_000
+// 心跳：静默 20s 起主动发协议层 ping，45s 仍无任何帧（含 pong）判定假死并重建。
+const WS_HEARTBEAT_INTERVAL_MS = 20_000
+const WS_IDLE_TIMEOUT_MS = 45_000
 // snapshot 只回最近一页消息；逐页补齐时的安全上限，避免异常会话拖垮加载。
 const MAX_HISTORY_PAGES = 100
 
-interface ApiEnvelope<T> {
-  code: number
-  msg: string
-  data: T
-}
-
-interface RemoteSession {
-  id: string
-  workspace_id?: string
-  archived?: boolean
-  title?: string
-  created_at?: unknown
-  updated_at?: unknown
-  busy?: boolean
-  pending_interaction?: string
-  metadata?: { cwd?: string }
-  agent_config?: { model?: string }
-  usage?: {
-    context_tokens?: number
-    total_cost_usd?: number
-  }
-}
-
-interface RemoteWorkspace {
-  id: string
-  root: string
-  name?: string
-  is_git_repo?: boolean
-  branch?: string
-  created_at?: unknown
-  last_opened_at?: unknown
-  session_count?: number
-}
-
-interface RemoteApproval {
-  approval_id: string
-  session_id: string
-  tool_name: string
-  action?: string
-  tool_input_display?: unknown
-  created_at?: unknown
-}
-
-interface RemoteQuestion {
-  question_id: string
-  session_id: string
-  questions: Array<{
-    id: string
-    question: string
-    header?: string
-    body?: string
-    options: Array<{ id: string; label: string; description?: string }>
-    multi_select?: boolean
-    allow_other?: boolean
-  }>
-  created_at?: unknown
-}
-
-interface RemoteProvider {
-  id: string
-  type: string
-  base_url?: string
-  default_model?: string
-  has_api_key: boolean
-  status: 'connected' | 'error' | 'unconfigured'
-  models?: string[]
-}
-
-/**
- * GET /api/v1/auth 摘要。0.39 起移除了 `ready` 字段，改为
- * `{ models_ready, providers_count, managed_provider }`（见上游
- * app/authLegacy/authLegacy.ts 的 authSummarySchema）。
- */
-interface AuthSummaryWire {
-  ready?: boolean
-  models_ready?: boolean
-  providers_count?: number
-  managed_provider?: { name?: string; status?: string } | null
-}
-
-interface RemoteModel {
-  provider: string
-  model: string
-  display_name?: string
-  max_context_size: number
-  capabilities?: string[]
-}
-
-type UnknownRecord = Record<string, unknown>
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null
-}
-
-function decodedBase64Size(value: string): number | null {
-  if (!value || value.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 4) return null
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return null
-  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0
-  return Math.floor(value.length * 3 / 4) - padding
-}
-
-function isBoundedString(value: unknown, max: number, allowEmpty = false): value is string {
-  return typeof value === 'string' && value.length <= max && (allowEmpty || value.length > 0)
-}
-
-async function readBoundedResponse(response: Response, maxBytes: number): Promise<Buffer> {
-  if (!response.body) return Buffer.alloc(0)
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > maxBytes) {
-        await reader.cancel()
-        throw new Error(`响应体超过 ${Math.floor(maxBytes / 1024 / 1024)} MiB`)
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total)
-}
-
-function textOf(value: unknown, max = 4_000): string {
-  if (typeof value === 'string') return value.slice(0, max)
-  if (value === null || value === undefined) return ''
-  try {
-    return JSON.stringify(value, null, 2).slice(0, max)
-  } catch {
-    return String(value).slice(0, max)
-  }
-}
-
-function atOf(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const parsed = Date.parse(value)
-    if (!Number.isNaN(parsed)) return parsed
-  }
-  return Date.now()
-}
-
-function timestampOf(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const parsed = Date.parse(value)
-    if (!Number.isNaN(parsed)) return parsed
-  }
-  return null
-}
-
-function projectOf(cwd: string): string {
-  const normalized = cwd.replace(/\\/g, '/').replace(/\/$/, '')
-  return basename(normalized) || 'workspace'
-}
-
-function phaseOf(session: RemoteSession): MoonPhase {
-  if (session.pending_interaction === 'approval' || session.pending_interaction === 'question') {
-    return 'full'
-  }
-  return session.busy ? 'first-quarter' : 'new'
-}
-
-function mapRemotePhase(value: unknown): MoonPhase | null {
-  if (typeof value !== 'string') return null
-  if (['idle', 'ready', 'completed'].includes(value)) return 'new'
-  if (['queued', 'receiving'].includes(value)) return 'waxing'
-  if (['thinking', 'reasoning'].includes(value)) return 'first-quarter'
-  if (['acting', 'tool', 'working', 'running'].includes(value)) return 'gibbous'
-  if (['approval', 'question', 'waiting'].includes(value)) return 'full'
-  if (['wrapping', 'finishing'].includes(value)) return 'waning'
-  return null
-}
-
-function sessionFromRemote(remote: RemoteSession, events: TrajectoryEvent[] = []): Session {
-  const cwd = remote.metadata?.cwd ?? ''
-  return {
-    id: remote.id,
-    workspaceId: remote.workspace_id,
-    title: remote.title?.trim() || '未命名会话',
-    project: projectOf(cwd),
-    cwd,
-    phase: phaseOf(remote),
-    model: fromKimiServerModel(remote.agent_config?.model),
-    updatedAt: atOf(remote.updated_at ?? remote.created_at),
-    contextTokens: remote.usage?.context_tokens ?? 0,
-    events,
-    archived: remote.archived === true
-  }
-}
-
-interface PersistedTelemetry {
-  contextTokens: number
-  tokensPerSecond: number
-  activeDurationMs: number
-  cost?: number
-  inputTokens: number
-  cachedInputTokens: number
-  outputTokens: number
-  cacheHitRate: number
-  estimatedCostCny?: number
-  inputCostCny?: number
-  cachedInputCostCny?: number
-  outputCostCny?: number
-  at: number
-}
-
-interface SubagentRuntime {
-  id: string
-  sessionId: string
-  at: number
-  lastAt: number
-  satelliteKind: SatelliteEvent['satelliteKind']
-  status: SatelliteEvent['status']
-  task: string
-  parentToolCallId?: string
-  swarmIndex?: number
-  runInBackground?: boolean
-  startedAt?: number
-  toolCount: number
-  contextTokens?: number
-  tokens?: number
-  latestActivity?: string
-  latestModelText: string
-  result?: string
-}
-
-interface TokenPricing {
-  cachedInput: number
-  input: number
-  output: number
-}
-
-/** 官方开放平台 2026-07-19 公布的人民币/百万 tokens 单价。 */
-function pricingForModel(model: unknown): TokenPricing | null {
-  const id = typeof model === 'string' ? model.toLowerCase() : ''
-  if (id.includes('highspeed')) return { cachedInput: 2.6, input: 13, output: 54 }
-  if (id.includes('kimi-for-coding') || id.includes('k2.7-code') || id.includes('k27')) {
-    return { cachedInput: 1.3, input: 6.5, output: 27 }
-  }
-  if (id.includes('k3')) return { cachedInput: 2, input: 20, output: 100 }
-  return null
-}
-
-function usageNumber(usage: UnknownRecord, ...keys: string[]): number {
-  for (const key of keys) {
-    const value = finiteNumber(usage[key])
-    if (value !== null && value >= 0) return value
-  }
-  return 0
-}
-
-function tokenUsageTotal(value: unknown): number | undefined {
-  if (!isRecord(value)) return undefined
-  const groups = [
-    ['inputOther', 'input_other'],
-    ['output', 'output_tokens'],
-    ['inputCacheRead', 'input_cache_read'],
-    ['inputCacheCreation', 'input_cache_creation']
-  ]
-  let seen = false
-  let total = 0
-  for (const keys of groups) {
-    for (const key of keys) {
-      const amount = finiteNumber(value[key])
-      if (amount === null || amount < 0) continue
-      total += amount
-      seen = true
-      break
-    }
-  }
-  return seen ? total : undefined
-}
-
-function compactActivity(value: unknown): string {
-  const candidate = isRecord(value)
-    ? value.text ?? value.message ?? value.delta ?? value.output ?? value
-    : value
-  return textOf(candidate, 2_000).replace(/\s+/g, ' ').trim().slice(-320)
-}
-
-function exactCost(record: UnknownRecord, usage: UnknownRecord): number | undefined {
-  for (const source of [usage, record]) {
-    for (const key of ['totalCostUsd', 'total_cost_usd', 'costUsd', 'cost_usd']) {
-      const value = finiteNumber(source[key])
-      if (value !== null && value > 0) return value
-    }
-  }
-  return undefined
-}
-
-function telemetryFromWire(text: string): PersistedTelemetry | null {
-  let latestContext = 0
-  let totalOutput = 0
-  let totalInput = 0
-  let totalCachedInput = 0
-  let activeDurationMs = 0
-  let pendingRequestAt: number | null = null
-  let latestAt = 0
-  let cost: number | undefined
-  let usageRecords = 0
-  let inputCostCny = 0
-  let cachedInputCostCny = 0
-  let outputCostCny = 0
-  let pricedRecords = 0
-
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.trim()) continue
-    let record: UnknownRecord
-    try {
-      const parsed = JSON.parse(line) as unknown
-      if (!isRecord(parsed)) continue
-      record = parsed
-    } catch {
-      continue
-    }
-    const type = typeof record.type === 'string' ? record.type : ''
-    const at = timestampOf(record.time ?? record.at ?? record.created_at)
-    if (type === 'llm.request') {
-      pendingRequestAt = at
-      continue
-    }
-    if (type !== 'usage.record' || !isRecord(record.usage)) continue
-    const usage = record.usage
-    const output = usageNumber(usage, 'output', 'outputTokens', 'output_tokens')
-    const inputOther = usageNumber(usage, 'inputOther', 'input_other', 'inputTokens', 'input_tokens')
-    const cacheRead = usageNumber(usage, 'inputCacheRead', 'input_cache_read')
-    const cacheCreation = usageNumber(usage, 'inputCacheCreation', 'input_cache_creation')
-    const uncachedInput = inputOther + cacheCreation
-    latestContext = inputOther + cacheRead + cacheCreation
-    totalInput += uncachedInput
-    totalCachedInput += cacheRead
-    totalOutput += output
-    usageRecords += 1
-    if (at !== null) {
-      latestAt = Math.max(latestAt, at)
-      if (pendingRequestAt !== null && at >= pendingRequestAt) {
-        activeDurationMs += at - pendingRequestAt
-      }
-    }
-    pendingRequestAt = null
-    cost = exactCost(record, usage) ?? cost
-    const pricing = pricingForModel(record.model ?? usage.model)
-    if (pricing) {
-      pricedRecords += 1
-      inputCostCny += (uncachedInput / 1_000_000) * pricing.input
-      cachedInputCostCny += (cacheRead / 1_000_000) * pricing.cachedInput
-      outputCostCny += (output / 1_000_000) * pricing.output
-    }
-  }
-
-  if (usageRecords === 0) return null
-  return {
-    contextTokens: latestContext,
-    tokensPerSecond: activeDurationMs > 0 ? totalOutput / (activeDurationMs / 1000) : 0,
-    activeDurationMs,
-    cost,
-    inputTokens: totalInput,
-    cachedInputTokens: totalCachedInput,
-    outputTokens: totalOutput,
-    cacheHitRate: totalInput + totalCachedInput > 0
-      ? (totalCachedInput / (totalInput + totalCachedInput)) * 100
-      : 0,
-    ...(pricedRecords > 0 ? {
-      estimatedCostCny: inputCostCny + cachedInputCostCny + outputCostCny,
-      inputCostCny,
-      cachedInputCostCny,
-      outputCostCny
-    } : {}),
-    at: latestAt || Date.now()
-  }
-}
-
-function workspaceFromRemote(remote: RemoteWorkspace): WorkspaceInfo {
-  return {
-    id: remote.id,
-    root: remote.root,
-    name: remote.name?.trim() || projectOf(remote.root),
-    isGitRepo: remote.is_git_repo === true,
-    branch: remote.branch,
-    createdAt: atOf(remote.created_at),
-    lastOpenedAt: atOf(remote.last_opened_at),
-    sessionCount: remote.session_count ?? 0
-  }
-}
-
-function attachmentFromBlock(block: UnknownRecord, index: number): Attachment | null {
-  const type = typeof block.type === 'string' ? block.type : ''
-  if (!['image', 'video', 'file'].includes(type)) return null
-  const source = isRecord(block.source) ? block.source : null
-  const mimeType =
-    (typeof block.media_type === 'string' && block.media_type) ||
-    (source && typeof source.media_type === 'string' && source.media_type) ||
-    (type === 'video' ? 'video/*' : type === 'image' ? 'image/*' : 'application/octet-stream')
-  return {
-    id: `history-attachment-${index}`,
-    name: typeof block.name === 'string' && block.name ? block.name : `${type}-${index + 1}`,
-    mimeType,
-    size: typeof block.size === 'number' ? block.size : 0,
-    vision: type === 'image' || type === 'video'
-  }
-}
-
-const INTERNAL_MESSAGE_ENVELOPES: Array<[RegExp, string]> = [
-  [/^<system-reminder(?:\s|>)/i, '系统提醒'],
-  [/^<notification(?:\s|>)/i, '运行时通知'],
-  [/^<environment_context(?:\s|>)/i, '环境上下文'],
-  [/^<permissions instructions(?:\s|>)/i, '权限上下文'],
-  [/^<app-context(?:\s|>)/i, 'App 上下文'],
-  [/^<collaboration_mode(?:\s|>)/i, '协作上下文'],
-  [/^<(?:apps|plugins|skills)_instructions(?:\s|>)/i, '能力上下文'],
-  [/^<recommended_plugins(?:\s|>)/i, '插件推荐'],
-  [/^(?:skill|plugin|mcp|app) tool loaded instructions for this request\b/i, '能力上下文'],
-  [/^<kimi-(?:skill|plugin|mcp|app)-loaded(?:\s|>)/i, '能力上下文'],
-  [/^<(?:skill|plugin|mcp|app)-loaded(?:\s|>)/i, '能力上下文'],
-  [/^#\s*AGENTS\.md instructions\b/i, '项目指令']
-]
-
-function internalMessageLabel(text: string): string | null {
-  const trimmed = text.trimStart()
-  const direct = INTERNAL_MESSAGE_ENVELOPES.find(([pattern]) => pattern.test(trimmed))?.[1]
-  if (direct) return direct
-  const prefix = trimmed.slice(0, 512)
-  if (/^[^\r\n]{0,160}loaded instructions for this request\b/i.test(prefix)) return '能力上下文'
-  if (/<kimi-(?:skill|plugin|mcp|app)-loaded(?:\s|>)/i.test(prefix)) return '能力上下文'
-  return null
-}
-
-function durationOf(...values: unknown[]): number {
-  for (const value of values) {
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value
-  }
-  return 0
-}
-
-function eventsFromMessages(messages: unknown): TrajectoryEvent[] {
-  const items = isRecord(messages) && Array.isArray(messages.items) ? messages.items : []
-  const events: TrajectoryEvent[] = []
-  const tools = new Map<string, number>()
-
-  for (const rawMessage of items) {
-    if (!isRecord(rawMessage)) continue
-    const messageId = typeof rawMessage.id === 'string' ? rawMessage.id : randomUUID()
-    const role = typeof rawMessage.role === 'string' ? rawMessage.role : 'assistant'
-    const at = atOf(rawMessage.created_at)
-    const updatedAt = timestampOf(rawMessage.updated_at)
-    const messageDuration = updatedAt !== null && updatedAt > at ? updatedAt - at : 0
-    const blocks = Array.isArray(rawMessage.content) ? rawMessage.content : []
-    const records = blocks.filter(isRecord)
-    const textParts = records
-      .filter((block) => block.type === 'text' && typeof block.text === 'string')
-      .map((block) => block.text as string)
-    const attachments = records
-      .map(attachmentFromBlock)
-      .filter((item): item is Attachment => item !== null)
-
-    // Kimi 会把技能、权限和运行环境作为 user role 注入；它们不是用户请求。
-    // user 消息按整条归类，assistant 消息则必须逐 block 保序，才能还原“文字—工具—文字”。
-    if (role === 'user') {
-      if (textParts.length) {
-        const text = textParts.join('\n')
-        const internalLabel = internalMessageLabel(text)
-        events.push(internalLabel
-          ? { id: `system-${messageId}`, kind: 'system', at, label: internalLabel, text }
-          : {
-              id: `user-${messageId}`,
-              kind: 'user',
-              at,
-              text,
-              attachments: attachments.length ? attachments : undefined
-            })
-      }
-      continue
-    }
-
-    records.forEach((rawBlock, index) => {
-      const type = rawBlock.type
-      if (type === 'text' && typeof rawBlock.text === 'string' && rawBlock.text) {
-        events.push({
-          id: `message-${messageId}-${index}`,
-          kind: 'message',
-          at,
-          markdown: rawBlock.text
-        })
-      } else if (type === 'thinking' && typeof rawBlock.thinking === 'string' && rawBlock.thinking) {
-        events.push({
-          id: `thinking-${messageId}-${index}`,
-          kind: 'transmission',
-          at,
-          text: rawBlock.thinking,
-          durationMs: durationOf(
-            rawBlock.duration_ms,
-            rawBlock.durationMs,
-            rawMessage.thinking_duration_ms,
-            rawMessage.thinkingDurationMs,
-            messageDuration
-          )
-        })
-      } else if (type === 'tool_use') {
-        const callId = typeof rawBlock.tool_call_id === 'string' ? rawBlock.tool_call_id : randomUUID()
-        tools.set(callId, events.length)
-        events.push({
-          id: `tool-${callId}`,
-          kind: 'instrument',
-          at,
-          tool: typeof rawBlock.tool_name === 'string' ? rawBlock.tool_name : 'Tool',
-          argsSummary: textOf(rawBlock.input, 500),
-          status: 'running'
-        })
-      } else if (type === 'tool_result') {
-        const callId = typeof rawBlock.tool_call_id === 'string' ? rawBlock.tool_call_id : ''
-        const eventIndex = tools.get(callId)
-        const event = eventIndex === undefined ? null : events[eventIndex]
-        if (eventIndex !== undefined && event?.kind === 'instrument') {
-          events[eventIndex] = {
-            ...event,
-            status: rawBlock.is_error === true ? 'failed' : 'done',
-            output: textOf(rawBlock.output)
-          }
-        }
-      }
-    })
-  }
-  const sorted = events.sort((a, b) => a.at - b.at)
-  return sorted.map((event, index) => {
-    if (event.kind !== 'transmission' || event.durationMs > 0) return event
-    const next = sorted.slice(index + 1).find((candidate) => candidate.kind === 'user' || candidate.at > event.at)
-    const inferred = next && next.kind !== 'user' ? next.at - event.at : 0
-    return inferred > 0 && inferred <= 10 * 60_000 ? { ...event, durationMs: inferred } : event
-  })
-}
-
-function approvalFromRemote(remote: RemoteApproval): ApprovalRequest {
-  const display = isRecord(remote.tool_input_display) ? remote.tool_input_display : null
-  const rawOptions = display && Array.isArray(display.options) ? display.options : []
-  const planReview =
-    display?.kind === 'plan_review' &&
-    typeof display.plan === 'string' &&
-    display.plan.trim()
-      ? {
-          plan: display.plan,
-          ...(typeof display.path === 'string' && display.path ? { path: display.path } : {}),
-          options: rawOptions
-            .filter(isRecord)
-            .filter((option) => typeof option.label === 'string' && option.label)
-            .slice(0, 3)
-            .map((option) => ({
-              label: String(option.label),
-              ...(typeof option.description === 'string' && option.description
-                ? { description: option.description }
-                : {})
-            }))
-        }
-      : undefined
-  return {
-    id: remote.approval_id,
-    sessionId: remote.session_id,
-    tool: remote.tool_name,
-    detail: textOf(remote.tool_input_display || remote.action || remote.tool_name),
-    ...(planReview ? { planReview } : {}),
-    requestedAt: atOf(remote.created_at)
-  }
-}
-
-function questionFromRemote(remote: RemoteQuestion): QuestionRequest {
-  return {
-    id: remote.question_id,
-    sessionId: remote.session_id,
-    requestedAt: atOf(remote.created_at),
-    questions: remote.questions.map((question) => ({
-      id: question.id,
-      question: question.question,
-      header: question.header,
-      body: question.body,
-      options: question.options,
-      multiSelect: question.multi_select === true,
-      allowOther: question.allow_other === true
-    }))
-  }
-}
-
-function satelliteKind(name: unknown): 'coder' | 'explore' | 'plan' {
-  const value = typeof name === 'string' ? name.toLowerCase() : ''
-  if (value.includes('explore')) return 'explore'
-  if (value.includes('plan')) return 'plan'
-  return 'coder'
-}
-
-function editableToolPaths(payload: UnknownRecord): string[] {
-  const name = typeof payload.name === 'string' ? payload.name : ''
-  if (!/(?:edit|write|patch|create|delete|remove|move|rename)/i.test(name)) return []
-  const paths = new Set<string>()
-  const add = (value: string) => {
-    const cleaned = value.trim().replace(/^["'`]|["'`]$/g, '')
-    if (cleaned && cleaned.length <= 4_096 && !cleaned.includes('\0')) paths.add(cleaned)
-  }
-  const visit = (value: unknown, key = '') => {
-    if (typeof value === 'string') {
-      if (/(?:^|_)(?:path|file|filename|target)$/i.test(key) || /(?:path|filePath|file_path)$/i.test(key)) add(value)
-      for (const match of value.matchAll(/^\*{3} (?:Add|Update|Delete) File:\s*(.+)$/gm)) add(match[1])
-      for (const match of value.matchAll(/^(?:---|\+\+\+) [ab]\/(.+)$/gm)) add(match[1])
-      for (const match of value.matchAll(/\b(?:Edit|WriteFile|CreateFile|DeleteFile)\(([^,\n)]+)/g)) add(match[1])
-      if (/^\s*[{[]/.test(value)) {
-        try {
-          visit(JSON.parse(value))
-        } catch {
-          // 工具 display 不一定是 JSON，继续使用已识别的文本路径。
-        }
-      }
-      return
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item)
-      return
-    }
-    if (isRecord(value)) {
-      for (const [childKey, child] of Object.entries(value)) visit(child, childKey)
-    }
-  }
-  visit(payload.args)
-  visit(payload.display)
-  return [...paths]
-}
-
-function accountProviderKind(provider: RemoteProvider): AccountProviderInfo['kind'] {
-  if (provider.id === 'managed:kimi-code') return 'kimi-oauth'
-  return provider.type === 'kimi' ? 'kimi-api' : 'openai-compatible'
-}
-
-function providerLabel(provider: RemoteProvider): string {
-  if (provider.id === 'managed:kimi-code') return 'Kimi OAuth'
-  if (provider.type === 'kimi') return 'Kimi 官方 API'
-  return 'OpenAI 兼容服务'
-}
-
-const PLAN_LABELS: Record<string, string> = {
-  LEVEL_FREE: 'Adagio',
-  LEVEL_BASIC: 'Moderato',
-  LEVEL_BEGINNER: 'Moderato',
-  LEVEL_INTERMEDIATE: 'Allegretto',
-  LEVEL_ADVANCED: 'Allegro',
-  LEVEL_PROFESSIONAL: 'Vivace'
-}
-
-function finiteNumber(value: unknown): number | null {
-  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
-  return Number.isFinite(number) ? number : null
-}
-
-function localDateKey(timestamp: number): string {
-  const date = new Date(timestamp)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function profileReasoningLabel(value: string): string {
-  return {
-    max: '极高',
-    high: '高',
-    medium: '中',
-    low: '低',
-    minimal: '最低',
-    on: '开启'
-  }[value.toLowerCase()] ?? value
-}
-
-function usageWindow(value: unknown): AccountUsage['weekly'] {
-  if (!isRecord(value)) return undefined
-  const limit = finiteNumber(value.limit)
-  const usedValue = finiteNumber(value.used)
-  const remainingValue = finiteNumber(value.remaining)
-  if (limit === null || limit <= 0) return undefined
-  const used = usedValue ?? Math.max(0, limit - (remainingValue ?? limit))
-  const usedPct = Math.max(0, Math.min(100, Math.round((used / limit) * 100)))
-  const resetAt =
-    (typeof value.resetTime === 'string' && value.resetTime) ||
-    (typeof value.resetAt === 'string' && value.resetAt) ||
-    (typeof value.reset_time === 'string' && value.reset_time) ||
-    (typeof value.reset_at === 'string' && value.reset_at) ||
-    undefined
-  return { usedPct, remainingPct: 100 - usedPct, resetAt }
-}
-
-function fixedPointCny(value: number): number {
-  const cents = value / 1_000_000
-  return (cents > 0 && cents < 1 ? 1 : Math.round(cents)) / 100
-}
-
-function walletAmount(value: unknown, ...keys: string[]): number | null {
-  if (!isRecord(value)) return null
-  for (const key of keys) {
-    const amount = finiteNumber(value[key])
-    if (amount !== null) return amount
-  }
-  return null
-}
-
-function walletCurrency(value: unknown): string | null {
-  return isRecord(value) && typeof value.currency === 'string'
-    ? value.currency.toUpperCase()
-    : null
-}
-
-function walletCny(value: unknown, ...keys: string[]): number | null {
-  const amount = walletAmount(value, ...keys)
-  if (amount === null || walletCurrency(value) !== 'CNY') return null
-  return fixedPointCny(amount)
-}
-
-function friendlyRunError(message: string, code?: string): string {
-  const haystack = `${code ?? ''} ${message}`.toLowerCase()
-  if (/quota|额度|balance|余额|insufficient|resource_exhausted|payment/.test(haystack)) {
-    return `额度不足，本轮执行已中断。请在“设置 → 账户”检查 5 小时、周限额或额度加油包。${message ? `\n\n服务端信息：${message}` : ''}`
-  }
-  if (/rate.?limit|too many requests|限流|频率/.test(haystack)) {
-    return `请求触发限流，本轮尚未完成。请等待额度窗口恢复后重试。${message ? `\n\n服务端信息：${message}` : ''}`
-  }
-  if (/unauth|forbidden|401|403|登录|token|credential/.test(haystack)) {
-    return `登录凭据已失效或无权调用，本轮执行已中断。请刷新账户或重新登录。${message ? `\n\n服务端信息：${message}` : ''}`
-  }
-  return message || '模型或服务链路异常终止，未生成可信的完成信号。'
-}
 
 /** Kimi Server REST + WebSocket 客户端。所有远端形状在主进程归一成 Farside 契约。 */
 export class KimiClientService {
@@ -809,27 +133,27 @@ export class KimiClientService {
   private sender: WebContents | null = null
   private subscriptions = new Set<string>()
   private reconnectTimer: NodeJS.Timeout | null = null
+  private reconnectAttempts = 0
+  private heartbeatTimer: NodeJS.Timeout | null = null
+  private lastServerActivityAt = 0
   private streamFlushTimer: NodeJS.Timeout | null = null
   private pendingStreamUpdates = new Map<string, Extract<AgentUpdate, { kind: 'event-upsert' }>>()
   private approvalSyncs = new Map<string, Promise<void>>()
   private questionSyncs = new Map<string, Promise<void>>()
   private disposed = false
-  private thinking = new Map<string, { id: string; startedAt: number }>()
   private thinkingSequence = 0
-  private activeToolCalls = new Map<string, Set<string>>()
-  private subagents = new Map<string, Map<string, SubagentRuntime>>()
+  private readonly runtimes = new SessionRuntimeStore()
   private wirePaths = new Map<string, string>()
+  /** wire.jsonl 个人资料统计缓存；mtime+size 未变化时直接复用解析结果。 */
+  private profileCache = new Map<string, { mtimeMs: number; size: number; stats: WireFileProfileStats }>()
   private readonly turnChanges = new TurnChangesService()
-  private activeRuns = new Set<string>()
-  private failedRuns = new Set<string>()
-  private settleTimers = new Map<string, NodeJS.Timeout>()
   private managedIdentity: AccountProfileStats['identity']
 
   constructor(private readonly server: ServerService) {}
 
   /** 是否仍有运行中的 Agent 任务；窗口关闭守卫据此拦截静默中断。 */
   hasActiveWork(): boolean {
-    return this.activeRuns.size > 0
+    return this.runtimes.anyActiveRun()
   }
 
   private bindTurnChanges(session: Session): Session {
@@ -851,7 +175,9 @@ export class KimiClientService {
         ...init?.headers
       }
     })
-    const body = (await res.json()) as ApiEnvelope<T>
+    const body = JSON.parse(
+      (await readBoundedResponse(res, MAX_API_RESPONSE_BYTES)).toString('utf8')
+    ) as ApiEnvelope<T>
     if (!res.ok || body.code !== 0) throw new Error(body.msg || `Kimi Server ${res.status}`)
     return body.data
   }
@@ -1088,88 +414,37 @@ export class KimiClientService {
       let requestCount = 0
       let fastRequestCount = 0
 
-      const increment = (map: Map<string, number>, key: string): void => {
-        if (key) map.set(key, (map.get(key) ?? 0) + 1)
-      }
-      const finalizeTask = (tokens: number, durationMs: number): void => {
-        peakTaskTokens = Math.max(peakTaskTokens, tokens)
-        longestTaskDurationMs = Math.max(longestTaskDurationMs, durationMs)
-      }
-
+      const seenFiles = new Set<string>()
       for (const file of wireFiles) {
-        const text = await fs.readFile(file, 'utf8').catch(() => '')
-        let taskTokens = 0
-        let taskDurationMs = 0
-        let pendingRequestAt: number | null = null
-        let hasTask = false
-        for (const line of text.split(/\r?\n/)) {
-          if (!line.trim()) continue
-          let record: UnknownRecord
-          try {
-            const parsed = JSON.parse(line) as unknown
-            if (!isRecord(parsed)) continue
-            record = parsed
-          } catch {
-            continue
-          }
-          const type = typeof record.type === 'string' ? record.type : ''
-          const at = timestampOf(record.time ?? record.at ?? record.created_at)
-          if (type === 'turn.prompt') {
-            if (hasTask) finalizeTask(taskTokens, taskDurationMs)
-            hasTask = true
-            taskTokens = 0
-            taskDurationMs = 0
-            pendingRequestAt = null
-            taskCount += 1
-            if (at !== null) {
-              const key = localDateKey(at)
-              const value = daily.get(key) ?? { tokens: 0, tasks: 0 }
-              value.tasks += 1
-              daily.set(key, value)
-            }
-            continue
-          }
-          if (type === 'llm.request') {
-            pendingRequestAt = at
-            requestCount += 1
-            const model = typeof record.model === 'string' ? record.model.toLowerCase() : ''
-            const alias = typeof record.modelAlias === 'string' ? record.modelAlias.toLowerCase() : ''
-            if (/highspeed|fast/.test(`${model} ${alias}`)) fastRequestCount += 1
-            if (typeof record.thinkingEffort === 'string') increment(reasoning, record.thinkingEffort)
-            continue
-          }
-          if (type === 'usage.record' && isRecord(record.usage)) {
-            const tokens = tokenUsageTotal(record.usage) ?? 0
-            totalTokens += tokens
-            taskTokens += tokens
-            if (at !== null) {
-              const key = localDateKey(at)
-              const value = daily.get(key) ?? { tokens: 0, tasks: 0 }
-              value.tokens += tokens
-              daily.set(key, value)
-              if (pendingRequestAt !== null && at >= pendingRequestAt) {
-                taskDurationMs += at - pendingRequestAt
-              }
-            }
-            pendingRequestAt = null
-            continue
-          }
-          if (type === 'context.append_loop_event' && isRecord(record.event)) {
-            const event = record.event
-            if (event.type !== 'tool.call' || typeof event.name !== 'string') continue
-            const toolName = event.name.trim()
-            increment(tools, toolName)
-            if (toolName.toLowerCase() === 'skill' && isRecord(event.args)) {
-              const skill = typeof event.args.skill === 'string'
-                ? event.args.skill
-                : typeof event.args.name === 'string'
-                  ? event.args.name
-                  : ''
-              increment(skills, skill.replace(/^\$/, '').trim())
-            }
-          }
+        seenFiles.add(file)
+        const stat = await fs.stat(file).catch(() => null)
+        const cached = this.profileCache.get(file)
+        let stats: WireFileProfileStats
+        if (stat && cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+          stats = cached.stats
+        } else {
+          const text = await fs.readFile(file, 'utf8').catch(() => '')
+          stats = parseWireProfile(text)
+          if (stat) this.profileCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, stats })
         }
-        if (hasTask || taskTokens > 0) finalizeTask(taskTokens, taskDurationMs)
+        for (const [key, value] of stats.daily) {
+          const entry = daily.get(key) ?? { tokens: 0, tasks: 0 }
+          entry.tokens += value.tokens
+          entry.tasks += value.tasks
+          daily.set(key, entry)
+        }
+        for (const [key, value] of stats.reasoning) reasoning.set(key, (reasoning.get(key) ?? 0) + value)
+        for (const [key, value] of stats.skills) skills.set(key, (skills.get(key) ?? 0) + value)
+        for (const [key, value] of stats.tools) tools.set(key, (tools.get(key) ?? 0) + value)
+        totalTokens += stats.totalTokens
+        peakTaskTokens = Math.max(peakTaskTokens, stats.peakTaskTokens)
+        longestTaskDurationMs = Math.max(longestTaskDurationMs, stats.longestTaskDurationMs)
+        taskCount += stats.taskCount
+        requestCount += stats.requestCount
+        fastRequestCount += stats.fastRequestCount
+      }
+      for (const file of this.profileCache.keys()) {
+        if (!seenFiles.has(file)) this.profileCache.delete(file)
       }
 
       const activeDays = [...daily.entries()]
@@ -1485,7 +760,7 @@ export class KimiClientService {
       ])
       const sessions = remoteSessions.map((item) => this.bindTurnChanges(sessionFromRemote(item)))
       for (const item of remoteSessions) {
-        if (item.busy === true) this.activeRuns.add(item.id)
+        if (item.busy === true) this.runtimes.ensure(item.id).runActive = true
       }
       const approvals = (
         await Promise.all(
@@ -1845,8 +1120,9 @@ export class KimiClientService {
       }
       // WebSocket 的 prompt.submitted 可能早于或晚于 HTTP 响应；请求发出前先锁住
       // 本地运行态，避免夹在中间的 busy=false 误判完成。
-      this.activeRuns.add(input.sessionId)
-      this.failedRuns.delete(input.sessionId)
+      const runtime = this.runtimes.ensure(input.sessionId)
+      runtime.runActive = true
+      runtime.runFailed = false
       this.emit({
         kind: 'session-patch',
         sessionId: input.sessionId,
@@ -1865,7 +1141,10 @@ export class KimiClientService {
       })
       return { ok: true }
     } catch (error) {
-      if (input && typeof input.sessionId === 'string') this.activeRuns.delete(input.sessionId)
+      if (input && typeof input.sessionId === 'string') {
+        const runtime = this.runtimes.get(input.sessionId)
+        if (runtime) runtime.runActive = false
+      }
       return { ok: false, error: error instanceof Error ? error.message : '指令发送失败' }
     }
   }
@@ -2492,17 +1771,50 @@ export class KimiClientService {
       socket.on('error', (error) => {
         this.emit({ kind: 'connection', connected: false, error: error.message })
       })
+      socket.on('pong', () => {
+        this.lastServerActivityAt = Date.now()
+      })
       socket.on('close', () => {
         if (this.socket === socket) this.socket = null
+        if (this.heartbeatTimer) {
+          clearInterval(this.heartbeatTimer)
+          this.heartbeatTimer = null
+        }
         this.emit({ kind: 'connection', connected: false })
         this.scheduleReconnect()
       })
     })
+    // 握手成功后重置退避；后续断线从基础间隔重新爬升。
+    this.reconnectAttempts = 0
+    this.lastServerActivityAt = Date.now()
+    this.heartbeatTimer ??= setInterval(() => this.checkHeartbeat(), WS_HEARTBEAT_INTERVAL_MS)
     this.emit({ kind: 'connection', connected: true })
+  }
+
+  /** 静默链路的假死检测：先探测（协议层 ping），持续无回包才断开重连。 */
+  private checkHeartbeat(): void {
+    const socket = this.socket
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    const idleMs = Date.now() - this.lastServerActivityAt
+    if (idleMs > WS_IDLE_TIMEOUT_MS) {
+      this.emit({ kind: 'connection', connected: false, error: '事件链路心跳超时，正在重连' })
+      socket.terminate()
+      return
+    }
+    if (idleMs > WS_HEARTBEAT_INTERVAL_MS) {
+      try {
+        socket.ping()
+      } catch {
+        // 发送失败交给 error/close 事件处理。
+      }
+    }
   }
 
   private scheduleReconnect(): void {
     if (this.disposed || this.reconnectTimer || !this.sender || this.sender.isDestroyed()) return
+    // 指数退避：服务端长时间不可用时不再以固定 1.5s 空转。
+    const delay = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempts)
+    this.reconnectAttempts = Math.min(this.reconnectAttempts + 1, 10)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       void this.connect().catch((error) => {
@@ -2513,10 +1825,11 @@ export class KimiClientService {
         })
         this.scheduleReconnect()
       })
-    }, 1_500)
+    }, delay)
   }
 
   private onMessage(data: RawData): void {
+    this.lastServerActivityAt = Date.now()
     let frame: UnknownRecord
     try {
       const parsed = JSON.parse(data.toString()) as unknown
@@ -2548,8 +1861,9 @@ export class KimiClientService {
   }
 
   private finishThinking(sessionId: string, at = Date.now()): void {
-    const active = this.thinking.get(sessionId)
-    if (!active) return
+    const runtime = this.runtimes.get(sessionId)
+    const active = runtime?.thinking
+    if (!runtime || !active) return
     this.upsertEvent(sessionId, {
       id: active.id,
       kind: 'transmission',
@@ -2557,38 +1871,40 @@ export class KimiClientService {
       text: '',
       durationMs: Math.max(1, at - active.startedAt)
     })
-    this.thinking.delete(sessionId)
+    runtime.thinking = null
+    this.runtimes.dropIfIdle(sessionId)
   }
 
   private startToolCall(sessionId: string, toolCallId: string): void {
-    const active = this.activeToolCalls.get(sessionId) ?? new Set<string>()
-    active.add(toolCallId)
-    this.activeToolCalls.set(sessionId, active)
+    this.runtimes.ensure(sessionId).activeToolCalls.add(toolCallId)
   }
 
   private finishToolCall(sessionId: string, toolCallId: string): boolean {
-    const active = this.activeToolCalls.get(sessionId)
-    if (!active) return false
-    active.delete(toolCallId)
-    if (active.size) return true
-    this.activeToolCalls.delete(sessionId)
+    const runtime = this.runtimes.get(sessionId)
+    if (!runtime) return false
+    runtime.activeToolCalls.delete(toolCallId)
+    if (runtime.activeToolCalls.size) return true
+    this.runtimes.dropIfIdle(sessionId)
     return false
   }
 
   private hasActiveToolCalls(sessionId: string): boolean {
-    return (this.activeToolCalls.get(sessionId)?.size ?? 0) > 0
+    return (this.runtimes.get(sessionId)?.activeToolCalls.size ?? 0) > 0
   }
 
   private clearSettleTimer(sessionId: string): void {
-    const timer = this.settleTimers.get(sessionId)
-    if (timer) clearTimeout(timer)
-    this.settleTimers.delete(sessionId)
+    const runtime = this.runtimes.get(sessionId)
+    if (runtime?.settleTimer) {
+      clearTimeout(runtime.settleTimer)
+      runtime.settleTimer = null
+    }
+    this.runtimes.dropIfIdle(sessionId)
   }
 
   private failActiveTools(sessionId: string, message: string): void {
-    const active = this.activeToolCalls.get(sessionId)
-    if (!active) return
-    for (const toolCallId of active) {
+    const runtime = this.runtimes.get(sessionId)
+    if (!runtime) return
+    for (const toolCallId of runtime.activeToolCalls) {
       this.upsertEvent(sessionId, {
         id: `tool-${toolCallId}`,
         kind: 'instrument',
@@ -2599,7 +1915,8 @@ export class KimiClientService {
         output: message
       })
     }
-    this.activeToolCalls.delete(sessionId)
+    runtime.activeToolCalls.clear()
+    this.runtimes.dropIfIdle(sessionId)
   }
 
   private markRunFailed(
@@ -2612,8 +1929,9 @@ export class KimiClientService {
     this.clearSettleTimer(sessionId)
     this.finishThinking(sessionId, now)
     this.failActiveTools(sessionId, message)
-    this.activeRuns.delete(sessionId)
-    if (status !== 'aborted') this.failedRuns.add(sessionId)
+    const runtime = this.runtimes.get(sessionId)
+    if (runtime) runtime.runActive = false
+    if (status !== 'aborted') this.runtimes.ensure(sessionId).runFailed = true
     this.settleActiveSubagents(
       sessionId,
       status === 'aborted' ? 'cancelled' : 'failed',
@@ -2631,13 +1949,14 @@ export class KimiClientService {
   }
 
   private scheduleUnconfirmedCheck(sessionId: string): void {
-    if (!this.activeRuns.has(sessionId)) return
+    if (!this.runtimes.isActive(sessionId)) return
     this.clearSettleTimer(sessionId)
     const timer = setTimeout(() => {
-      this.settleTimers.delete(sessionId)
+      const scheduled = this.runtimes.get(sessionId)
+      if (scheduled && scheduled.settleTimer === timer) scheduled.settleTimer = null
       void this.listRemoteSessions()
         .then((sessions) => {
-          if (!this.activeRuns.has(sessionId)) return
+          if (!this.runtimes.isActive(sessionId)) return
           const remote = sessions.find((session) => session.id === sessionId)
           if (remote?.busy === true) {
             this.emit({
@@ -2676,15 +1995,11 @@ export class KimiClientService {
           this.scheduleUnconfirmedCheck(sessionId)
         })
     }, 4_000)
-    this.settleTimers.set(sessionId, timer)
+    this.runtimes.ensure(sessionId).settleTimer = timer
   }
 
   private subagentRuntime(sessionId: string, subagentId: string, at: number): SubagentRuntime {
-    let bySession = this.subagents.get(sessionId)
-    if (!bySession) {
-      bySession = new Map()
-      this.subagents.set(sessionId, bySession)
-    }
+    const bySession = this.runtimes.ensure(sessionId).subagents
     let state = bySession.get(subagentId)
     if (!state) {
       state = {
@@ -2734,7 +2049,7 @@ export class KimiClientService {
     if (type.startsWith('subagent.')) return false
     const agentId = typeof payload.agentId === 'string' ? payload.agentId : null
     if (!agentId || agentId === 'main') return false
-    const state = this.subagents.get(sessionId)?.get(agentId)
+    const state = this.runtimes.get(sessionId)?.subagents.get(agentId)
     // 未知子代理事件也不得伪装成主 Agent 消息或工具调用。
     if (!state) return true
 
@@ -2774,7 +2089,7 @@ export class KimiClientService {
     status: Extract<SatelliteEvent['status'], 'failed' | 'cancelled'>,
     result: string
   ): void {
-    const states = this.subagents.get(sessionId)
+    const states = this.runtimes.get(sessionId)?.subagents
     if (!states) return
     const now = Date.now()
     for (const state of states.values()) {
@@ -2788,12 +2103,12 @@ export class KimiClientService {
   }
 
   private discardSettledSubagents(sessionId: string): void {
-    const states = this.subagents.get(sessionId)
-    if (!states) return
-    for (const [subagentId, state] of states) {
-      if (['done', 'failed', 'cancelled'].includes(state.status)) states.delete(subagentId)
+    const runtime = this.runtimes.get(sessionId)
+    if (!runtime) return
+    for (const [subagentId, state] of runtime.subagents) {
+      if (['done', 'failed', 'cancelled'].includes(state.status)) runtime.subagents.delete(subagentId)
     }
-    if (!states.size) this.subagents.delete(sessionId)
+    if (!runtime.subagents.size) this.runtimes.dropIfIdle(sessionId)
   }
 
   private handleSessionEvent(sessionId: string, type: string, payload: UnknownRecord): void {
@@ -2804,9 +2119,10 @@ export class KimiClientService {
     if (this.handleSubagentActivity(sessionId, type, payload, now)) return
     if (type === 'prompt.submitted') {
       this.clearSettleTimer(sessionId)
-      this.activeRuns.add(sessionId)
-      this.failedRuns.delete(sessionId)
-      this.activeToolCalls.delete(sessionId)
+      const runtime = this.runtimes.ensure(sessionId)
+      runtime.runActive = true
+      runtime.runFailed = false
+      runtime.activeToolCalls.clear()
       this.discardSettledSubagents(sessionId)
       const content = Array.isArray(payload.content) ? payload.content : []
       const text = content
@@ -2846,7 +2162,7 @@ export class KimiClientService {
     }
     if (type === 'turn.started') {
       this.clearSettleTimer(sessionId)
-      this.activeRuns.add(sessionId)
+      this.runtimes.ensure(sessionId).runActive = true
       this.emit({
         kind: 'session-patch',
         sessionId,
@@ -2855,14 +2171,15 @@ export class KimiClientService {
       return
     }
     if (type === 'thinking.delta' && typeof payload.delta === 'string') {
-      let activeThinking = this.thinking.get(sessionId)
+      const runtime = this.runtimes.ensure(sessionId)
+      let activeThinking = runtime.thinking
       if (!activeThinking) {
         const startedAt = atOf(payload.createdAt)
         activeThinking = {
           id: `thinking-${String(payload.turnId ?? 'active')}-${++this.thinkingSequence}`,
           startedAt
         }
-        this.thinking.set(sessionId, activeThinking)
+        runtime.thinking = activeThinking
       }
       this.upsertEvent(
         sessionId,
@@ -2996,7 +2313,7 @@ export class KimiClientService {
             ? 'full'
             : busy
               ? this.hasActiveToolCalls(sessionId) ? 'gibbous' : 'first-quarter'
-              : this.activeRuns.has(sessionId)
+              : this.runtimes.isActive(sessionId)
                 ? 'waning'
                 : 'new'
         }
@@ -3084,7 +2401,8 @@ export class KimiClientService {
     }
     if (type === 'turn.ended' || type === 'prompt.completed' || type === 'prompt.aborted') {
       this.finishThinking(sessionId, now)
-      this.activeToolCalls.delete(sessionId)
+      const runtime = this.runtimes.get(sessionId)
+      if (runtime) runtime.activeToolCalls.clear()
       if (type === 'prompt.aborted') {
         this.markRunFailed(sessionId, '请求已由用户终止，未完成当前任务。', 'aborted')
         return
@@ -3099,8 +2417,8 @@ export class KimiClientService {
       }
       if (type === 'prompt.completed') {
         this.clearSettleTimer(sessionId)
-        this.activeRuns.delete(sessionId)
-        if (!this.failedRuns.has(sessionId)) {
+        if (runtime) runtime.runActive = false
+        if (!runtime?.runFailed) {
           this.emit({
             kind: 'session-patch',
             sessionId,
@@ -3250,6 +2568,10 @@ export class KimiClientService {
 
   dispose(): void {
     this.disposed = true
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = null
     if (this.streamFlushTimer) clearTimeout(this.streamFlushTimer)
@@ -3257,8 +2579,7 @@ export class KimiClientService {
     this.pendingStreamUpdates.clear()
     this.approvalSyncs.clear()
     this.questionSyncs.clear()
-    for (const timer of this.settleTimers.values()) clearTimeout(timer)
-    this.settleTimers.clear()
+    this.runtimes.disposeAll()
     this.socket?.close()
     this.socket = null
     this.sender = null
