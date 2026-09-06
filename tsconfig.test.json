@@ -5,7 +5,8 @@
     "moduleResolution": "Node",
     "noEmit": false,
     "outDir": ".tmp/security-tests",
-    "rootDir": "."
+    "rootDir": ".",
+    "lib": ["ES2022", "DOM"]
   },
   "include": [
     "src/main/security.ts",
@@ -15,6 +16,13 @@
     "src/main/services/turn-changes.ts",
     "src/main/services/wire-events.ts",
     "src/main/services/session-runtime.ts",
+    "src/renderer/src/lib/turns.ts",
+    "src/renderer/src/lib/phaseLabels.ts",
+    "src/renderer/src/lib/composer-state.ts",
+    "src/renderer/src/lib/prompt-queue.ts",
+    "src/renderer/src/lib/slash-handlers.ts",
+    "src/renderer/src/components/composer/slashCommands.ts",
+    "src/renderer/src/env.d.ts",
     "src/shared/security.ts",
     "src/shared/types.ts",
     "tests/security.test.ts",
@@ -23,6 +31,10 @@
     "tests/oauth-login-state.test.ts",
     "tests/turn-changes.test.ts",
     "tests/wire-events.test.ts",
-    "tests/session-runtime.test.ts"
+    "tests/session-runtime.test.ts",
+    "tests/turn-grouping.test.ts",
+    "tests/composer-state.test.ts",
+    "tests/prompt-queue.test.ts",
+    "tests/slash-handlers.test.ts"
   ]
 }

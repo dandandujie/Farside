@@ -21,7 +21,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none .tmp/security-tests/tests/security.test.js .tmp/security-tests/tests/runtime-manifest.test.js .tmp/security-tests/tests/kimi-server-endpoint.test.js .tmp/security-tests/tests/oauth-login-state.test.js .tmp/security-tests/tests/turn-changes.test.js .tmp/security-tests/tests/wire-events.test.js .tmp/security-tests/tests/session-runtime.test.js tests/runtime-lock.test.mjs tests/runtime-patch.test.mjs tests/runtime-upstream.test.mjs",
+    "test": "tsc -p tsconfig.test.json && node --test --experimental-test-isolation=none .tmp/security-tests/tests/security.test.js .tmp/security-tests/tests/runtime-manifest.test.js .tmp/security-tests/tests/kimi-server-endpoint.test.js .tmp/security-tests/tests/oauth-login-state.test.js .tmp/security-tests/tests/turn-changes.test.js .tmp/security-tests/tests/wire-events.test.js .tmp/security-tests/tests/session-runtime.test.js .tmp/security-tests/tests/turn-grouping.test.js .tmp/security-tests/tests/composer-state.test.js .tmp/security-tests/tests/prompt-queue.test.js .tmp/security-tests/tests/slash-handlers.test.js tests/runtime-lock.test.mjs tests/runtime-patch.test.mjs tests/runtime-upstream.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "runtime:prepare": "node scripts/prepare-kimi-runtime.mjs",
     "runtime:smoke": "node scripts/smoke-kimi-runtime.mjs",

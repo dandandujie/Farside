@@ -18,6 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         os:
+          # ubuntu 作为快速反馈通道（无安装包目标，仅验证测试/类型/构建）；
+          # windows 与 macos 是发布平台，缺一不可
+          - ubuntu-latest
           - windows-latest
           - macos-latest
 
