@@ -166,18 +166,26 @@ export function Composer() {
     setAttachmentError('')
     let nextCount = attachments.length
     let nextBytes = attachments.reduce((total, attachment) => total + attachment.size, 0)
+    let limitError = false
+    const unsupported: string[] = []
     for (const f of Array.from(files)) {
-      if (!f.type.startsWith('image/') && !f.type.startsWith('video/')) continue
+      if (!f.type.startsWith('image/') && !f.type.startsWith('video/')) {
+        unsupported.push(f.name)
+        continue
+      }
       if (nextCount >= MAX_ATTACHMENT_COUNT) {
         setAttachmentError(locale === 'en-US' ? `Up to ${MAX_ATTACHMENT_COUNT} attachments are allowed.` : `最多添加 ${MAX_ATTACHMENT_COUNT} 个附件。`)
+        limitError = true
         break
       }
       if (f.size > MAX_ATTACHMENT_BYTES) {
         setAttachmentError(locale === 'en-US' ? `${f.name} exceeds the 20 MiB limit.` : `${f.name} 超过 20 MiB 单文件上限。`)
+        limitError = true
         continue
       }
       if (nextBytes + f.size > MAX_TOTAL_ATTACHMENT_BYTES) {
         setAttachmentError(locale === 'en-US' ? 'Attachments exceed the 40 MiB total limit.' : '附件总大小不能超过 40 MiB。')
+        limitError = true
         break
       }
       let dataBase64: string
@@ -205,6 +213,12 @@ export function Composer() {
       })
       nextCount += 1
       nextBytes += f.size
+    }
+    // 拖入不支持类型的文件不再静默丢弃，明确告知当前仅支持图像与视频。
+    if (unsupported.length && !limitError) {
+      setAttachmentError(locale === 'en-US'
+        ? `Skipped ${unsupported.join(', ')}: only images and videos are supported.`
+        : `已跳过 ${unsupported.join('、')}：当前仅支持图片与视频附件。`)
     }
   }
 
