@@ -53,7 +53,8 @@ const EN: Record<string, string> = {
   '搜索扩展，例如 browser automation': 'Search extensions, e.g. browser automation', '跨市场搜索 ↗': 'Search marketplaces ↗', '市场只负责发现。安装仍需在 MCP、Skills 或 Plugins 标签中确认来源，避免未经审查的代码直接进入 Agent 环境。': 'Marketplaces are for discovery. Confirm the source in the MCP, Skills, or Plugins tab before installing code into the Agent environment.',
   'Model Context Protocol 官方注册表': 'Official Model Context Protocol registry', 'MCP Server 发现与配置': 'Discover and configure MCP Servers', '扩展索引与 MCP 目录': 'Extension index and MCP directory', '开放 Agent Skill 市场': 'Open Agent Skill marketplace', '社区 Agent Skill 仓库': 'Community Agent Skill repositories', 'Kimi 官方市场': 'Kimi official marketplace', '由 Kimi /plugins marketplace 提供': 'Powered by Kimi /plugins marketplace',
   '前往设置登录 Kimi 账户': 'Open Settings to sign in', '前往设置切换模型供应商': 'Open Settings to switch providers', '管理插件': 'Manage plugins', '编辑 mcp.json 配置': 'Edit mcp.json', '编辑 config.toml 配置': 'Edit config.toml', '压缩上下文，回收燃料': 'Compact context to reclaim fuel', '撤销上一轮操作': 'Undo the last turn', '重载当前会话': 'Reload this session', '导出会话与诊断日志为 ZIP': 'Export session and diagnostics as ZIP', '切到放开档，全部自动批准': 'Switch to YOLO; auto-approve everything', '切到自动档': 'Switch to auto approvals', '派出并行子代理': 'Launch parallel subagents', '设定自主目标，长线巡航': 'Set an autonomous long-running goal', '查看全部指令': 'View all commands', '查看配额用量': 'View quota usage', '查看链路状态': 'View runtime status', '管理 MCP 服务器': 'Manage MCP servers', '切换界面主题 ': 'Switch theme', '关闭 Farside': 'Quit Farside',
-  'PROJECT SCOPED': 'PROJECT SCOPED', '+ 添加 Hook': '+ Add Hook', '任务轨道': 'Trajectories'
+  'PROJECT SCOPED': 'PROJECT SCOPED', '+ 添加 Hook': '+ Add Hook', '任务轨道': 'Trajectories',
+  '重试': 'Retry', '知道了': 'Got it'
 }
 
 interface PreferencesValue {
@@ -65,6 +66,9 @@ interface PreferencesValue {
 }
 
 const PreferencesContext = createContext<PreferencesValue | null>(null)
+
+/** 已告警过的漏词 key；每个 key 只提示一次，避免渲染风暴刷屏。 */
+const missingEnKeys = new Set<string>()
 
 function readLocale(): AppLocale {
   const shot = new URLSearchParams(window.location.search).get('shot')
@@ -102,7 +106,16 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('farside:toggle-theme', onToggle)
   }, [])
 
-  const t = useCallback((source: string) => locale === 'en-US' ? EN[source] ?? source : source, [locale])
+  const t = useCallback((source: string) => {
+    if (locale !== 'en-US') return source
+    const translated = EN[source]
+    // 英文界面夹中文即漏词：dev 下一次性告警，便于在开发期发现而不是靠用户报告。
+    if (translated === undefined && import.meta.env.DEV && !missingEnKeys.has(source)) {
+      missingEnKeys.add(source)
+      console.warn(`[i18n] EN 词典缺少词条："${source}"`)
+    }
+    return translated ?? source
+  }, [locale])
   const value = useMemo(() => ({ locale, theme, setLocale: setLocaleState, setTheme: setThemeState, t }), [locale, theme, t])
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>
 }
