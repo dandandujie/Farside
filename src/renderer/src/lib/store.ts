@@ -44,9 +44,17 @@ export interface QueuedPrompt {
   createdAt: number
 }
 
+export interface SessionError {
+  message: string
+  /** prompt=重发队列头；load=重载会话；session=仅可手动关闭 */
+  kind: 'prompt' | 'load' | 'session'
+}
+
 interface FarsideState {
   sessions: Session[]
   activeSessionId: string | null
+  /** 目标会话的历史正在从服务端补齐；此时空轨道不能误读为“没有消息”。 */
+  sessionLoading: boolean
   initialized: boolean
   connected: boolean
   authReady: boolean | null
@@ -62,9 +70,14 @@ interface FarsideState {
   logoutAccount(): Promise<void>
   configureAccount(input: AccountConfigureInput): Promise<boolean>
   lastError: string | null
+  /** 归属于具体会话的错误；切换回该会话仍可见，与全局 lastError 互补。 */
+  sessionErrors: Record<string, SessionError>
+  setSessionError(sessionId: string, message: string, kind?: SessionError['kind']): void
+  clearSessionError(sessionId: string): void
+  retrySessionError(sessionId: string): void
   initialize(): Promise<void>
   setActiveSession(id: string): void
-  newSession(): void
+  newSession(prefill?: string): void
   renameSession(id: string, title: string): void
   forkSession(id: string): void
   exportSession(id: string): void
@@ -365,6 +378,7 @@ function resolveSessionProject(session: Session, projects: WorkspaceInfo[]): Ses
 export const useFarsideStore = create<FarsideState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
+  sessionLoading: false,
   initialized: false,
   connected: false,
   authReady: null,
@@ -386,6 +400,22 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   archivedProjectIds: readPreference('archived-projects'),
   composerBySession: {},
   lastError: null,
+  sessionErrors: {},
+  setSessionError: (sessionId, message, kind = 'session') =>
+    set((state) => ({ sessionErrors: { ...state.sessionErrors, [sessionId]: { message, kind } } })),
+  clearSessionError: (sessionId) =>
+    set((state) => {
+      if (!(sessionId in state.sessionErrors)) return {}
+      const sessionErrors = { ...state.sessionErrors }
+      delete sessionErrors[sessionId]
+      return { sessionErrors }
+    }),
+  retrySessionError: (sessionId) => {
+    const error = get().sessionErrors[sessionId]
+    if (!error) return
+    if (error.kind === 'prompt') get().dispatchNextQueued(sessionId)
+    else if (error.kind === 'load') get().setActiveSession(sessionId)
+  },
   initialize: async () => {
     const bridge = window.api
     const api = bridge?.agent
@@ -578,18 +608,29 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     const state = get()
     const target = state.sessions.find((session) => session.id === id)
     const composer = state.composerBySession[id] ?? readSessionComposer(id, target?.model ?? state.model)
-    set({
-      activeSessionId: id,
-      lastError: null,
-      ...composer,
-      composerBySession: { ...state.composerBySession, [id]: composer },
-      sending: target?.phase !== 'new'
+    const hasApi = Boolean(window.api?.agent)
+    set((state) => {
+      const sessionErrors = { ...state.sessionErrors }
+      delete sessionErrors[id]
+      return {
+        activeSessionId: id,
+        lastError: null,
+        sessionLoading: hasApi,
+        sessionErrors,
+        ...composer,
+        composerBySession: { ...state.composerBySession, [id]: composer },
+        sending: target?.phase !== 'new'
+      }
     })
     const api = window.api?.agent
     if (!api) return
     void api.loadSession(id).then((result) => {
+      const stillActive = get().activeSessionId === id
       if (!result.ok || !result.session) {
-        if (get().activeSessionId === id) set({ lastError: result.error ?? '会话加载失败' })
+        if (stillActive) {
+          set({ sessionLoading: false })
+          get().setSessionError(id, result.error ?? '会话加载失败', 'load')
+        }
         return
       }
       set((state) => ({
@@ -602,11 +643,13 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           ...state.questionQueue.filter((item) => item.sessionId !== id),
           ...(result.questions ?? [])
         ],
-        goal: state.activeSessionId === id ? result.goal ?? null : state.goal
+        goal: state.activeSessionId === id ? result.goal ?? null : state.goal,
+        // 用户在加载期间切走时，不能清掉新会话的加载态。
+        ...(stillActive ? { sessionLoading: false } : {})
       }))
     })
   },
-  newSession: () => {
+  newSession: (prefill?: string) => {
     const state = get()
     const cwd = state.sessions.find((item) => item.id === state.activeSessionId)?.cwd
     const api = window.api?.agent
@@ -634,6 +677,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         ...composer,
         sending: false
       }))
+      if (prefill) set((current) => composerPatchForSession(current, session.id, { draft: prefill }))
       return
     }
     void api
@@ -664,6 +708,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           sending: false,
           lastError: null
         }))
+        if (prefill) set((current) => composerPatchForSession(current, sessionId, { draft: prefill }))
       })
   },
   renameSession: (id, title) => {
@@ -678,9 +723,9 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       set((state) => ({
         sessions: state.sessions.map((item) =>
           item.id === id && previous ? { ...item, title: previous } : item
-        ),
-        lastError: result.error ?? '会话重命名失败'
+        )
       }))
+      get().setSessionError(id, result.error ?? '会话重命名失败')
     })
   },
   forkSession: (id) => {
@@ -689,7 +734,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     if (!api) return
     void api.forkSession(id).then((result) => {
       if (!result.ok || !result.session) {
-        set({ lastError: result.error ?? '会话分叉失败' })
+        get().setSessionError(id, result.error ?? '会话分叉失败')
         return
       }
       const sessionId = result.session.id
@@ -712,7 +757,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     const api = window.api?.agent
     if (!api) return
     void api.exportSession(id).then((result) => {
-      if (!result.ok) set({ lastError: result.error ?? '会话导出失败' })
+      if (!result.ok) get().setSessionError(id, result.error ?? '会话导出失败')
     })
   },
   archiveSession: (id) => {
@@ -728,7 +773,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     if (previousActive === id && !nextActive) set({ draft: '', attachments: [], sending: false })
     void window.api?.agent.archiveSession(id).then((result) => {
       if (!result.ok) {
-        set({ sessions: previous, lastError: result.error ?? '会话归档失败' })
+        set({ sessions: previous })
+        get().setSessionError(id, result.error ?? '会话归档失败')
         if (previousActive) get().setActiveSession(previousActive)
       }
     })
@@ -899,7 +945,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       })
       .then((result) => {
         if (!result.ok) {
-          set({ lastError: result.error ?? '权限模式同步失败' })
+          get().setSessionError(sessionId, result.error ?? '权限模式同步失败')
           return
         }
         // 切到自动/放开后，已经挂起的审批服务端不会自动放行，逐条批准以解挂当前轮。
@@ -922,11 +968,12 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     const state = get()
     const active = state.sessions.find((session) => session.id === state.activeSessionId)
     if (!state.activeSessionId || active?.phase === 'new') return
+    const sessionId = state.activeSessionId
     set({ sending: false })
     void window.api?.agent
-      .runSessionAction({ sessionId: state.activeSessionId, action: 'abort' })
+      .runSessionAction({ sessionId, action: 'abort' })
       .then((result) => {
-          if (!result.ok) set({ lastError: result.error ?? '任务中断失败' })
+          if (!result.ok) get().setSessionError(sessionId, result.error ?? '任务中断失败')
       })
   },
   undoTurns: (count) => {
@@ -948,7 +995,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       // “文件已回滚、轨迹却还在”的不可逆半完成状态。
       const result = await api.runSessionAction({ sessionId, action: 'undo', count })
       if (!result.ok) {
-        set({ lastError: result.error ?? '请求回退失败' })
+        get().setSessionError(sessionId, result.error ?? '请求回退失败')
         return
       }
       // 会话已回退，文件回滚失败时基线仍保留，自动重试一次。
@@ -962,11 +1009,11 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         return
       }
       set((current) => ({
-        sessions: upsertSession(current.sessions, resolveSessionProject(loaded.session as Session, current.projects)),
-        lastError: fileResult.ok
-          ? null
-          : (fileResult.error ?? '文件改动撤销失败；会话已回退，请通过 git 或「本轮改动」面板核对文件状态')
+        sessions: upsertSession(current.sessions, resolveSessionProject(loaded.session as Session, current.projects))
       }))
+      if (!fileResult.ok) {
+        get().setSessionError(sessionId, fileResult.error ?? '文件改动撤销失败；会话已回退，请通过 git 或「本轮改动」面板核对文件状态')
+      }
     })()
   },
   undoLastTurn: () => get().undoTurns(1),
@@ -985,7 +1032,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       // 与 undoTurns 相同的两段式顺序：先撤会话轮次（失败即原状），再回滚文件。
       const result = await api.runSessionAction({ sessionId, action: 'undo', count: 1 })
       if (!result.ok) {
-        set({ lastError: result.error ?? '重新编辑上一轮失败' })
+        get().setSessionError(sessionId, result.error ?? '重新编辑上一轮失败')
         return
       }
       let fileResult = await api.resolveTurnChanges({ sessionId, action: 'undo', count: 1 })
@@ -997,11 +1044,13 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
         ...(loaded.ok && loaded.session
           ? { sessions: upsertSession(current.sessions, resolveSessionProject(loaded.session as Session, current.projects)) }
           : {}),
-        ...composerPatch(current, { draft: prompt.text }),
-        lastError: loaded.ok
-          ? (fileResult.ok ? null : (fileResult.error ?? '文件改动撤销失败；会话已回退，请通过 git 或「本轮改动」面板核对文件状态'))
-          : loaded.error ?? '上一轮已撤回，但会话刷新失败'
+        ...composerPatch(current, { draft: prompt.text })
       }))
+      if (!loaded.ok) {
+        get().setSessionError(sessionId, loaded.error ?? '上一轮已撤回，但会话刷新失败')
+      } else if (!fileResult.ok) {
+        get().setSessionError(sessionId, fileResult.error ?? '文件改动撤销失败；会话已回退，请通过 git 或「本轮改动」面板核对文件状态')
+      }
     })()
   },
   sending: false,
@@ -1015,178 +1064,20 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     if (command) {
       const name = command[1]?.toLowerCase() ?? ''
       const arg = command[2]?.trim() ?? ''
-      if (name === 'new') {
-        get().setDraft('')
-        get().newSession()
-        return
-      }
-      if (name === 'settings') {
-        get().setDraft('')
-        set({ view: 'settings' })
-        return
-      }
-      if (name === 'sessions') {
-        get().setDraft('')
-        set({ view: 'sessions', sidebarOpen: true })
-        return
-      }
-      if (name === 'plan') {
-        get().setDraft('')
-        get().togglePlanMode()
-        return
-      }
-      if (name === 'swarm') {
-        const enabled = arg === 'on' ? true : arg === 'off' ? false : !state.swarmMode
-        get().setDraft('')
-        get().setSwarmMode(enabled)
-        return
-      }
-      if (name === 'auto' || name === 'yolo') {
-        get().setDraft('')
-        get().setPermissionMode(name)
-        return
-      }
-      if (name === 'permission' && ['manual', 'auto', 'yolo'].includes(arg)) {
-        get().setDraft('')
-        get().setPermissionMode(arg as PermissionMode)
-        return
-      }
-      if (name === 'model') {
-        const picked =
-          arg === 'k3' || arg === 'kimi-k3'
-            ? 'kimi-k3'
-            : arg.includes('highspeed')
-              ? 'kimi-for-coding-highspeed'
-              : arg as ModelId || null
-        if (picked) {
-          // 校验模型 ID 确实在当前账户可用列表中，避免任意字符串静默生效。
-          const known = get().account?.models ?? []
-          if (known.length > 0 && !known.some((item) => item.id === picked)) {
-            get().setDraft('')
-            set({ lastError: `未知模型「${picked}」。可用模型：${known.map((item) => item.id).join('、')}` })
-            return
-          }
-          get().setDraft('')
-          get().setModel(picked)
+      const handler = SLASH_HANDLERS[name]
+      if (handler) {
+        const outcome = handler(arg, { activeSessionId: state.activeSessionId })
+        if (outcome.action === 'handled') return
+        if (outcome.action === 'prompt') {
+          promptText = outcome.text
+          goalObjective = outcome.goalObjective
         }
-        return
-      }
-      if (name === 'exit') {
-        get().setDraft('')
-        const busy = get().sessions.some(
-          (session) => session.phase !== 'new' || get().promptQueues[session.id]?.length
-        )
-        if (busy && !window.confirm('仍有会话在运行或排队中，退出会中断任务。确定关闭 Farside？')) return
-        void window.api?.window.close()
-        return
-      }
-      if (name === 'help') {
-        get().setDraft('')
-        set({ paletteOpen: true })
-        return
-      }
-      if (name === 'status' || name === 'usage') {
-        get().setDraft('')
-        set({ missionOpen: true, missionTab: 'telemetry' })
-        return
-      }
-      if (name === 'mcp') {
-        get().setDraft('')
-        get().openSettings('extensions')
-        return
-      }
-      if (name === 'plugins') {
-        get().setDraft('')
-        get().openSettings('extensions')
-        return
-      }
-      if (name === 'mcp-config' || name === 'update-config') {
-        get().setDraft('')
-        get().openSettings('configuration')
-        return
-      }
-      if (name === 'login' || name === 'provider') {
-        get().setDraft('')
-        // 桌面端登录与 Provider 切换集中在设置的账户页完成。
-        get().openSettings('account')
-        return
-      }
-      if (name === 'logout') {
-        get().setDraft('')
-        void get().logoutAccount()
-        return
-      }
-      if (name === 'theme') {
-        get().setDraft('')
-        window.dispatchEvent(new CustomEvent('farside:toggle-theme'))
-        return
-      }
-      if (UNSUPPORTED_SLASH_COMMANDS.has(name)) {
+        // pass：会话级命令在无活动会话等条件下按原文继续作为提示词上送。
+      } else if (UNSUPPORTED_SLASH_COMMANDS.has(name)) {
         // 明确告知未支持，而不是把命令文本当作提示词静默上送给模型。
         get().setDraft('')
         set({ lastError: `/${name} 在 Farside 桌面端暂无对应入口，请改用设置页或命令面板（⌘K）。` })
         return
-      }
-      if (state.activeSessionId && name === 'fork') {
-        get().setDraft('')
-        get().forkSession(state.activeSessionId)
-        return
-      }
-      if (state.activeSessionId && (name === 'export-md' || name === 'export')) {
-        get().setDraft('')
-        get().exportSession(state.activeSessionId)
-        return
-      }
-      if (state.activeSessionId && name === 'title' && arg) {
-        get().setDraft('')
-        get().renameSession(state.activeSessionId, arg)
-        return
-      }
-      if (state.activeSessionId && name === 'reload') {
-        get().setDraft('')
-        get().setActiveSession(state.activeSessionId)
-        return
-      }
-      if (state.activeSessionId && (name === 'compact' || name === 'undo')) {
-        get().setDraft('')
-        if (name === 'undo') {
-          get().undoLastTurn()
-          return
-        }
-        void window.api?.agent
-          .runSessionAction({
-            sessionId: state.activeSessionId,
-            action: 'compact',
-            instruction: arg || undefined
-          })
-          .then((result) => {
-            if (!result.ok) set({ lastError: result.error ?? `/${name} 执行失败` })
-          })
-        return
-      }
-      if (name === 'goal') {
-        if (arg === 'pause') {
-          get().setDraft('')
-          get().pauseGoal()
-          return
-        }
-        if (arg === 'resume') {
-          get().setDraft('')
-          get().resumeGoal()
-          return
-        }
-        if (arg === 'cancel') {
-          get().setDraft('')
-          get().cancelGoal()
-          return
-        }
-        if (!arg) {
-          get().setDraft('')
-          set({ view: 'goals' })
-          return
-        }
-        goalObjective = arg
-        promptText = arg
       }
     }
     if (!state.activeSessionId) return
@@ -1217,7 +1108,7 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     }
     const queue = state.promptQueues[state.activeSessionId] ?? []
     if (queue.length >= 20) {
-      set({ lastError: '当前会话的等待队列已达 20 条，请先处理或移除部分请求' })
+      get().setSessionError(state.activeSessionId as string, '当前会话的等待队列已达 20 条，请先处理或移除部分请求')
       return
     }
     const queued: QueuedPrompt = {
@@ -1283,9 +1174,13 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       text: queued.text,
       attachments: queued.attachments.length ? queued.attachments : undefined
     }
-    set((current) => ({
+    set((current) => {
+      const sessionErrors = { ...current.sessionErrors }
+      delete sessionErrors[sessionId]
+      return {
       sending: current.activeSessionId === sessionId ? true : current.sending,
       lastError: null,
+      sessionErrors,
       promptQueues: {
         ...current.promptQueues,
         [sessionId]: (current.promptQueues[sessionId] ?? []).slice(1)
@@ -1305,7 +1200,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
             }
           : item
       )
-    }))
+      }
+    })
     void api
       .submitPrompt({
         sessionId,
@@ -1320,9 +1216,9 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       })
       .then((result) => {
         if (result.ok) return
+        get().setSessionError(sessionId, result.error ?? '指令发送失败', 'prompt')
         set((current) => ({
           sending: current.activeSessionId === sessionId ? false : current.sending,
-          lastError: result.error ?? '指令发送失败',
           promptQueues: {
             ...current.promptQueues,
             [sessionId]: [queued, ...(current.promptQueues[sessionId] ?? [])]
@@ -1373,10 +1269,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
           }
           return
         }
-        set((state) => ({
-          approvalQueue: [approval, ...state.approvalQueue],
-          lastError: result.error ?? '审批应答失败'
-        }))
+        set((state) => ({ approvalQueue: [approval, ...state.approvalQueue] }))
+        get().setSessionError(approval.sessionId, result.error ?? '审批应答失败')
       })
   },
   questionQueue: [],
@@ -1394,10 +1288,8 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
       })
       .then((result) => {
         if (result.ok) return
-        set((state) => ({
-          questionQueue: [request, ...state.questionQueue],
-          lastError: result.error ?? '问题应答失败'
-        }))
+        set((state) => ({ questionQueue: [request, ...state.questionQueue] }))
+        get().setSessionError(request.sessionId, result.error ?? '问题应答失败')
       })
   },
 
@@ -1405,31 +1297,43 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
   pauseGoal: () => {
     const state = get()
     if (!state.activeSessionId || !state.goal) return
+    const sessionId = state.activeSessionId
     set({ goal: { ...state.goal, status: 'paused' } })
     void window.api?.agent
       .controlGoal({ sessionId: state.activeSessionId, control: 'pause' })
       .then((result) => {
-        if (!result.ok) set({ goal: state.goal, lastError: result.error ?? '目标暂停失败' })
+        if (!result.ok) {
+          set({ goal: state.goal })
+          get().setSessionError(sessionId, result.error ?? '目标暂停失败')
+        }
       })
   },
   resumeGoal: () => {
     const state = get()
     if (!state.activeSessionId || !state.goal) return
+    const sessionId = state.activeSessionId
     set({ goal: { ...state.goal, status: 'active' } })
     void window.api?.agent
       .controlGoal({ sessionId: state.activeSessionId, control: 'resume' })
       .then((result) => {
-        if (!result.ok) set({ goal: state.goal, lastError: result.error ?? '目标恢复失败' })
+        if (!result.ok) {
+          set({ goal: state.goal })
+          get().setSessionError(sessionId, result.error ?? '目标恢复失败')
+        }
       })
   },
   cancelGoal: () => {
     const state = get()
     if (!state.activeSessionId || !state.goal) return
+    const sessionId = state.activeSessionId
     set({ goal: null })
     void window.api?.agent
       .controlGoal({ sessionId: state.activeSessionId, control: 'cancel' })
       .then((result) => {
-        if (!result.ok) set({ goal: state.goal, lastError: result.error ?? '目标取消失败' })
+        if (!result.ok) {
+          set({ goal: state.goal })
+          get().setSessionError(sessionId, result.error ?? '目标取消失败')
+        }
       })
   },
 
@@ -1573,6 +1477,215 @@ export const useFarsideStore = create<FarsideState>((set, get) => ({
     }
   }
 }))
+
+type SlashOutcome =
+  | { action: 'handled' }
+  /** 条件不满足（如会话级命令但无活动会话）：按原文继续作为提示词上送。 */
+  | { action: 'pass' }
+  /** 命令改写为提示词继续上送（如 /goal <目标>）。 */
+  | { action: 'prompt'; text: string; goalObjective?: string }
+
+interface SlashEnv {
+  activeSessionId: string | null
+}
+
+const handled = (): SlashOutcome => ({ action: 'handled' })
+
+function clearDraft(): void {
+  useFarsideStore.getState().setDraft('')
+}
+
+/**
+ * 斜杠命令注册表：新增命令加一个 handler 即可，不再往 send() 的 if 链里堆分支。
+ * 与 composer 的 SLASH_COMMANDS 补全清单保持同名；返回 prompt 时用改写文本继续上送。
+ */
+const SLASH_HANDLERS: Record<string, (arg: string, env: SlashEnv) => SlashOutcome> = {
+  new: () => {
+    clearDraft()
+    useFarsideStore.getState().newSession()
+    return handled()
+  },
+  settings: () => {
+    clearDraft()
+    useFarsideStore.setState({ view: 'settings' })
+    return handled()
+  },
+  sessions: () => {
+    clearDraft()
+    useFarsideStore.setState({ view: 'sessions', sidebarOpen: true })
+    return handled()
+  },
+  plan: () => {
+    clearDraft()
+    useFarsideStore.getState().togglePlanMode()
+    return handled()
+  },
+  swarm: (arg) => {
+    const enabled = arg === 'on' ? true : arg === 'off' ? false : !useFarsideStore.getState().swarmMode
+    clearDraft()
+    useFarsideStore.getState().setSwarmMode(enabled)
+    return handled()
+  },
+  auto: () => {
+    clearDraft()
+    useFarsideStore.getState().setPermissionMode('auto')
+    return handled()
+  },
+  yolo: () => {
+    clearDraft()
+    useFarsideStore.getState().setPermissionMode('yolo')
+    return handled()
+  },
+  permission: (arg) => {
+    if (!['manual', 'auto', 'yolo'].includes(arg)) return { action: 'pass' }
+    clearDraft()
+    useFarsideStore.getState().setPermissionMode(arg as PermissionMode)
+    return handled()
+  },
+  model: (arg) => {
+    const picked =
+      arg === 'k3' || arg === 'kimi-k3'
+        ? 'kimi-k3'
+        : arg.includes('highspeed')
+          ? 'kimi-for-coding-highspeed'
+          : arg as ModelId || null
+    if (!picked) return handled()
+    // 校验模型 ID 确实在当前账户可用列表中，避免任意字符串静默生效。
+    const known = useFarsideStore.getState().account?.models ?? []
+    if (known.length > 0 && !known.some((item) => item.id === picked)) {
+      clearDraft()
+      useFarsideStore.setState({ lastError: `未知模型「${picked}」。可用模型：${known.map((item) => item.id).join('、')}` })
+      return handled()
+    }
+    clearDraft()
+    useFarsideStore.getState().setModel(picked)
+    return handled()
+  },
+  exit: () => {
+    clearDraft()
+    const state = useFarsideStore.getState()
+    const busy = state.sessions.some(
+      (session) => session.phase !== 'new' || state.promptQueues[session.id]?.length
+    )
+    if (busy && !window.confirm('仍有会话在运行或排队中，退出会中断任务。确定关闭 Farside？')) return handled()
+    void window.api?.window.close()
+    return handled()
+  },
+  help: () => {
+    clearDraft()
+    useFarsideStore.setState({ paletteOpen: true })
+    return handled()
+  },
+  status: () => {
+    clearDraft()
+    useFarsideStore.setState({ missionOpen: true, missionTab: 'telemetry' })
+    return handled()
+  },
+  mcp: () => {
+    clearDraft()
+    useFarsideStore.getState().openSettings('extensions')
+    return handled()
+  },
+  plugins: () => {
+    clearDraft()
+    useFarsideStore.getState().openSettings('extensions')
+    return handled()
+  },
+  'mcp-config': () => {
+    clearDraft()
+    useFarsideStore.getState().openSettings('configuration')
+    return handled()
+  },
+  login: () => {
+    // 桌面端登录与 Provider 切换集中在设置的账户页完成。
+    clearDraft()
+    useFarsideStore.getState().openSettings('account')
+    return handled()
+  },
+  logout: () => {
+    clearDraft()
+    void useFarsideStore.getState().logoutAccount()
+    return handled()
+  },
+  theme: () => {
+    clearDraft()
+    window.dispatchEvent(new CustomEvent('farside:toggle-theme'))
+    return handled()
+  },
+  fork: (_arg, env) => {
+    if (!env.activeSessionId) return { action: 'pass' }
+    clearDraft()
+    useFarsideStore.getState().forkSession(env.activeSessionId)
+    return handled()
+  },
+  'export-md': (_arg, env) => {
+    if (!env.activeSessionId) return { action: 'pass' }
+    clearDraft()
+    useFarsideStore.getState().exportSession(env.activeSessionId)
+    return handled()
+  },
+  title: (arg, env) => {
+    if (!env.activeSessionId || !arg) return { action: 'pass' }
+    clearDraft()
+    useFarsideStore.getState().renameSession(env.activeSessionId, arg)
+    return handled()
+  },
+  reload: (_arg, env) => {
+    if (!env.activeSessionId) return { action: 'pass' }
+    clearDraft()
+    useFarsideStore.getState().setActiveSession(env.activeSessionId)
+    return handled()
+  },
+  undo: (_arg, env) => {
+    if (!env.activeSessionId) return { action: 'pass' }
+    clearDraft()
+    useFarsideStore.getState().undoLastTurn()
+    return handled()
+  },
+  compact: (arg, env) => {
+    if (!env.activeSessionId) return { action: 'pass' }
+    clearDraft()
+    const sessionId = env.activeSessionId
+    void window.api?.agent
+      .runSessionAction({
+        sessionId,
+        action: 'compact',
+        instruction: arg || undefined
+      })
+      .then((result) => {
+        if (!result.ok) useFarsideStore.getState().setSessionError(sessionId, result.error ?? '/compact 执行失败')
+      })
+    return handled()
+  },
+  goal: (arg) => {
+    if (arg === 'pause') {
+      clearDraft()
+      useFarsideStore.getState().pauseGoal()
+      return handled()
+    }
+    if (arg === 'resume') {
+      clearDraft()
+      useFarsideStore.getState().resumeGoal()
+      return handled()
+    }
+    if (arg === 'cancel') {
+      clearDraft()
+      useFarsideStore.getState().cancelGoal()
+      return handled()
+    }
+    if (!arg) {
+      clearDraft()
+      useFarsideStore.setState({ view: 'goals' })
+      return handled()
+    }
+    return { action: 'prompt', text: arg, goalObjective: arg }
+  }
+}
+// 同义命令复用同一 handler。
+SLASH_HANDLERS.usage = SLASH_HANDLERS.status
+SLASH_HANDLERS['update-config'] = SLASH_HANDLERS['mcp-config']
+SLASH_HANDLERS.provider = SLASH_HANDLERS.login
+SLASH_HANDLERS.export = SLASH_HANDLERS['export-md']
 
 export function useActiveSession(): Session | null {
   return useFarsideStore(
